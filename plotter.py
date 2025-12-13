@@ -12,6 +12,9 @@
 
 import numpy as np
 
+from shapely.geometry import Point
+from shapely.ops import unary_union
+
 STANDARD_ENVELOPES = {
     "Sphere":   (0.5,   0.5,   0.5,   0.667, 1.000),
     "GNVR":     (0.415, 0.600, 0.180, 0.615, 3.044),
@@ -45,8 +48,8 @@ class GertlerEnvelope:
     #
     # NOTE: These points are not linearly scalable with length like NACA airfoils.
     # NOTE: I have made use of numpy array here but an iterator function would be memory efficient I guess?
-    def points (self, truncation = 0):
-        X = np.linspace(0, 1 - truncation, self.n)
+    def points (self, truncation = 0, tuples = True, X = None):
+        X = np.linspace(0, 1 - truncation, self.n) if X is None else X
         R = np.polyval(self.coeffs[::-1] + [0], X)
         R[R < 0] = 0
 
@@ -54,25 +57,11 @@ class GertlerEnvelope:
         if not truncation:
             R[-1] = 0 
 
-        return zip(X * self.length, self.diameter * np.sqrt(R))
+        R = self.diameter * np.sqrt(R)
+        X = self.length * X
 
-    # Returns the coordinates of points on the envelope which intercepts the trailing edge of a fin.
-    def get_trailing_edge_intercept (self, x, rc):
-        y = self.at(x)
-        chord_length = 0
-        h = self.length / self.n
-        x1 = x
-        y1 = y
-
-        while chord_length < rc:
-            x1 += h
-            y1 = self.at(x1)
-            chord_length = ((x-x1)**2 + (y-y1)**2)**0.5
-
-        if chord_length < rc:
-            raise Exception("GertlerEnvelope: Unable to find the trailing edge intercept for the given parameters.")
-
-        return (x1, y1)
+        # TODO: Zipping elements maybe a bad idea 
+        return zip(X, R) if tuples else X, R
     
     def petal_coordinates (self, petal_number, circumferential_divisons):
         delta_phi = 2 * np.pi / petal_number
@@ -90,6 +79,74 @@ class GertlerEnvelope:
                 coords_2D.append((x, C))
 
         return coords_2D
+    
+    # Returns the volume of the envelope (mono lobe).
+    def volume (self):
+        # pi x D^2 x L x cp/4
+        return np.pi * (self.diameter**2) * self.length * np.dot(self.coeffs, [1/2, 1/3, 1/4, 1/5, 1/6, 1/7])
+    
+    # Returns the volume of a bilobed envelope.
+    #
+    # f = Distance of the extreme lobe from X axis.
+    def volume_bilobe (self, f):
+        # If there is no distance between lobes, both the lobes coincide.
+        if f == 0:
+            return self.volume()
+
+        X, R = self.points(tuples=False)    # Array of coordinates of the envelope
+        A = np.zeros(self.n)                # Array of intersections of cross section
+
+        # Calculation intersecting cross sectional area
+        r = R[f < R]
+        A[f < R] =  2 * (r**2 * np.acos(f/r) - f * np.sqrt(r**2 - f**2))
+
+        # 2 * (Volume of the lobes) - Intersection of both the lobes
+        return 2 * self.volume() - np.trapezoid(A, X)
+    
+    # Returns the volume of a trilobed envelope.
+    #
+    # e = Distance of central lobe from Y axis
+    # f = Distance of extreme lobe from X axis
+    # g = Distance of central lobe from Z axis
+    #
+    # NOTE: For trilobe volume calculation, shapely module is used. Try to find some other way to compute
+    # it other way which is more accurate and faster. Shapely calculations are not accurate but the error is
+    # often negligible.
+    def volume_trilobe (self, e, f, g, central_lobe = None):
+        # If central lobe is not specified, itself is taken as central lobe.
+        central_lobe = central_lobe or self
+
+        X, R = self.points(tuples=False)    # Array of extreme lobe coordinates
+        A = np.zeros(self.n)                # Array of intersections of cross section
+
+        # Array of central lobe coordinates 
+        _, R2 = central_lobe.points(tuples=False, X=(X - e)/self.length)
+
+        for i in range(self.n):
+            r = R[i]
+            r2 = R2[i]
+
+            A[i] = unary_union([Point(-f, 0).buffer(r), Point(f, 0).buffer(r), Point(0, g).buffer(r2)]).area
+
+        return np.trapezoid(A, X)
+    
+    # Returns the coordinates of points on the envelope which intercepts the trailing edge of a fin.
+    def get_trailing_edge_intercept (self, x, rc):
+        y = self.at(x)
+        chord_length = 0
+        h = self.length / self.n
+        x1 = x
+        y1 = y
+
+        while chord_length < rc:
+            x1 += h
+            y1 = self.at(x1)
+            chord_length = ((x-x1)**2 + (y-y1)**2)**0.5
+
+        if chord_length < rc:
+            raise Exception("GertlerEnvelope: Unable to find the trailing edge intercept for the given parameters.")
+
+        return x1, y1
     
     # Returns the coefficients of the Gertler polynomial from standard parameters.
     def get_coefficients (params):

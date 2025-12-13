@@ -190,6 +190,17 @@ class AirshipGeometry:
         if remove_temp_script:
             os.remove(exec_script_path)
 
+    # Returns the total volume of fluid that can occupy in the multi lobe.
+    def volume (self):
+        lobe_number = self.parameters["LOBE_NUMBER"]
+
+        if lobe_number == 1:
+            return self.envelope.volume()
+        elif lobe_number == 2:
+            return self.envelope.volume_bilobe(self.parameters["LOBE_OFFSET_Y"])
+        else:
+            return self.envelope.volume_trilobe(self.parameters["LOBE_OFFSET_X"], self.parameters["LOBE_OFFSET_Y"], self.parameters["LOBE_OFFSET_Z"], self.central_lobe)
+
 # A function to plot the petal profile and save it.
 def plot_petal_profile (envelope, num_petals, num_points_c, dat_filename, shape_name='Envelope'):
     coords_2D = envelope.petal_coordinates(num_petals, num_points_c)
