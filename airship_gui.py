@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
@@ -77,10 +78,10 @@ class AirshipGUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("Airship Geometry Generator | Salome Interface")
         self.setGeometry(100, 100, 1200, 900)
-        self.salome_path = r"C:\SALOME-9.15.0\run_SALOME.bat"  #change this path as per your system
-        self.output_directory = os.path.join(os.getcwd(), "output")
-        if not os.path.exists(self.output_directory):
-            os.makedirs(self.output_directory)
+        self.salome_path = r"C:\SALOME-9.15.0\run_SALOME.bat"
+        self.base_output_directory = os.path.join(os.getcwd(), "output")
+        if not os.path.exists(self.base_output_directory):
+            os.makedirs(self.base_output_directory)
 
         self.inputs = {}
         self.setup_style()
@@ -181,9 +182,9 @@ class AirshipGUI(QMainWindow):
         is_vol = self.mode_button_group.checkedId() == 2; is_multi = self.lobe_button_group.checkedId() > 1
         self.length_box.setHidden(is_vol); self.volume_box.setHidden(not is_vol); self.offset_box.setHidden(not is_multi)
         curr = self.tab_widget.currentIndex(); self.tab_widget.clear()
-        self.tab_widget.addTab(self.primary_input_tab, "1. Envelope Geometry")
-        if is_multi: self.tab_widget.addTab(self.fairings_tab, "2. Fairing Sheet")
-        self.tab_widget.addTab(self.fin_tab, "3. Fin Design"); self.tab_widget.addTab(self.output_tab, "4. Output & Run")
+        self.tab_widget.addTab(self.primary_input_tab, "Envelope Geometry")
+        if is_multi: self.tab_widget.addTab(self.fairings_tab, "Fairing Sheet")
+        self.tab_widget.addTab(self.fin_tab, "Fin Design"); self.tab_widget.addTab(self.output_tab, "Output & Run")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1)); self.tab_widget.blockSignals(False)
 
     def setup_fairings_tab(self):
@@ -230,21 +231,16 @@ class AirshipGUI(QMainWindow):
 
     def setup_output_tab(self):
         layout = QVBoxLayout(self.output_tab)
-
-        # Project Name
         self.inputs["FINAL_OBJECT_NAME"] = QLineEdit("Airship_Project")
-        layout.addWidget(QLabel("Project Name:"))
-        layout.addWidget(self.inputs["FINAL_OBJECT_NAME"])
+        layout.addWidget(QLabel("Project Name:")); layout.addWidget(self.inputs["FINAL_OBJECT_NAME"])
 
-        # Browse Directory Button Logic
-        dir_group = QGroupBox("Output Destination")
+        dir_group = QGroupBox("Base Output Directory")
         dir_layout = QHBoxLayout(dir_group)
-        self.dir_path_display = QLineEdit(self.output_directory)
+        self.dir_path_display = QLineEdit(self.base_output_directory)
         self.dir_path_display.setReadOnly(True)
         btn_browse = QPushButton("Browse...")
         btn_browse.clicked.connect(self.browse_output_directory)
-        dir_layout.addWidget(self.dir_path_display)
-        dir_layout.addWidget(btn_browse)
+        dir_layout.addWidget(self.dir_path_display); dir_layout.addWidget(btn_browse)
         layout.addWidget(dir_group)
 
         self.inputs["N_PETALS"] = LabeledSlider("Gores/Petals", 2, 200, 8, 1, 0)
@@ -255,18 +251,38 @@ class AirshipGUI(QMainWindow):
             btn = QPushButton(fmt); btn.setCheckable(True); h_lay.addWidget(btn); self.format_button_group.addButton(btn, i); btn.setChecked(i==1)
         layout.addLayout(h_lay)
 
-        btn_lay = QHBoxLayout(); rb = QPushButton("RUN GENERATION"); rb.setMinimumHeight(35); rb.setStyleSheet("background-color: #007ACC; color: white;"); rb.clicked.connect(self.run_process); btn_lay.addWidget(rb); pb = QPushButton("PLOT 2D PETAL"); pb.setMinimumHeight(35); pb.clicked.connect(self.generate_plot); btn_lay.addWidget(pb); layout.addLayout(btn_lay)
+        btn_lay = QHBoxLayout()
+        rb = QPushButton("RUN GENERATION")
+        rb.setMinimumHeight(35); rb.setStyleSheet("background-color: #007ACC; color: white;")
+        rb.clicked.connect(self.run_process)
+
+        pb = QPushButton("PLOT 2D PETAL")
+        pb.setMinimumHeight(35); pb.clicked.connect(self.generate_plot)
+
+        btn_lay.addWidget(rb); btn_lay.addWidget(pb); layout.addLayout(btn_lay)
         self.log = QTextEdit("Status: Ready"); self.log.setReadOnly(True); layout.addWidget(self.log)
 
     def browse_output_directory(self):
-        """Launches directory picker and updates the output path."""
-        selected_dir = QFileDialog.getExistingDirectory(self, "Select Output Directory", self.output_directory)
+        selected_dir = QFileDialog.getExistingDirectory(self, "Select Base Output Directory", self.base_output_directory)
         if selected_dir:
-            self.output_directory = selected_dir
+            self.base_output_directory = selected_dir
             self.dir_path_display.setText(selected_dir)
-            self.log.append(f"Output directory changed to: {selected_dir}")
 
-    def get_parameters(self):
+    def get_next_output_folder(self):
+        """Finds the next folder name following 'Output_N' convention."""
+        existing = [d for d in os.listdir(self.base_output_directory) if os.path.isdir(os.path.join(self.base_output_directory, d))]
+        indices = []
+        for d in existing:
+            match = re.match(r"Output_(\d+)", d)
+            if match:
+                indices.append(int(match.group(1)))
+
+        next_idx = max(indices) + 1 if indices else 1
+        new_folder = os.path.join(self.base_output_directory, f"Output_{next_idx}")
+        os.makedirs(new_folder)
+        return new_folder
+
+    def get_parameters(self, current_output_dir):
         p = {}
         slider_keys = ["ENVELOPE_LENGTH", "ENVELOPE_RESOLUTION", "m1", "r0", "r1", "cp", "l2d",
                        "FIN_AXIAL_OFFSET", "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS",
@@ -302,24 +318,24 @@ class AirshipGUI(QMainWindow):
         try:
             p["FIN_THETA_POS"] = [float(a.strip()) for a in theta_text.split(',') if a.strip()]
         except ValueError: return None
-        p["OUTPUT_DIRECTORY"] = self.output_directory
+        p["OUTPUT_DIRECTORY"] = current_output_dir
         return p
 
     def run_process(self):
         if AirshipGeometry is None: return
-        p = self.get_parameters()
+        target_dir = self.get_next_output_folder()
+        p = self.get_parameters(target_dir)
         if p is None: return
+
         fmt_idx = self.format_button_group.checkedId()
         fmt_ext = [".brep", ".stl", ".step"][fmt_idx]
         fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
-        # Calculate full export path
-        export_path = os.path.join(p["OUTPUT_DIRECTORY"], p["FINAL_OBJECT_NAME"] + fmt_ext)
+        export_path = os.path.join(target_dir, p["FINAL_OBJECT_NAME"] + fmt_ext)
 
         try:
             g = AirshipGeometry(p, self.salome_path)
             original_generate = g._generate_salome_script
             def patched_generate(export_file, export_format, open_gui):
-                # Ensure the path in the script uses the selected directory
                 path = original_generate(export_path, export_format, open_gui)
                 with open(path, 'r') as f: content = f.read()
                 if export_format == "STL":
@@ -331,21 +347,20 @@ class AirshipGUI(QMainWindow):
                 return path
             g._generate_salome_script = patched_generate
             g.run_salome(False, p["FINAL_OBJECT_NAME"] + fmt_ext, fmt_name)
-            self.log.append(f"Exporting to: {export_path}")
+            self.log.append(f"Run Saved in: {target_dir}")
         except Exception as e: self.log.append(f"Error: {e}")
 
     def generate_plot(self):
         if calculate_petal_coordinates is None: return
-        p = self.get_parameters()
+        target_dir = self.get_next_output_folder()
+        p = self.get_parameters(target_dir)
         if p is None: return
         try:
             L = p.get("ENVELOPE_LENGTH", 100.0)
             coords, nx, nc = calculate_petal_coordinates(p, L, int(p["N_PETALS"]))
-            # Save .dat file in the chosen directory
-            dat_file = os.path.join(self.output_directory, p["FINAL_OBJECT_NAME"]+".dat")
+            dat_file = os.path.join(target_dir, p["FINAL_OBJECT_NAME"]+".dat")
             msg = plot_and_save_profile(coords, p["FINAL_OBJECT_NAME"], dat_file, nx, nc, int(p["N_PETALS"]))
-            self.log.append(f"Petal plot saved to: {dat_file}")
-            self.log.append(msg)
+            self.log.append(f"Plot saved in: {target_dir}")
         except Exception as e: self.log.append(f"Plot Error: {e}")
 
     def load_defaults(self): self.load_preset(0)
@@ -356,24 +371,19 @@ class AirshipGUI(QMainWindow):
 
     def reset_to_defaults(self):
         self.load_preset(self.preset_combo.currentIndex())
-        self.log.append("Parameters reset to preset defaults.")
+        self.log.append("Parameters reset.")
 
     def setup_navigation_buttons(self):
-        nav = QWidget()
-        lay = QHBoxLayout(nav)
-        self.btn_back = QPushButton("<< PREV")
-        self.btn_back.setMinimumHeight(35); self.btn_back.setFixedWidth(100)
-        self.btn_next = QPushButton("NEXT >>")
-        self.btn_next.setMinimumHeight(35); self.btn_next.setFixedWidth(100)
+        nav = QWidget(); lay = QHBoxLayout(nav)
+        self.btn_back = QPushButton("<< PREV"); self.btn_back.setMinimumHeight(35); self.btn_back.setFixedWidth(100)
+        self.btn_next = QPushButton("NEXT >>"); self.btn_next.setMinimumHeight(35); self.btn_next.setFixedWidth(100)
         self.btn_next.setStyleSheet("background-color: #00BFFF; color: black; font-weight: bold;")
         self.btn_back.clicked.connect(lambda: self.tab_widget.setCurrentIndex(self.tab_widget.currentIndex()-1))
         self.btn_next.clicked.connect(lambda: self.tab_widget.setCurrentIndex(self.tab_widget.currentIndex()+1))
-        self.btn_reset = QPushButton("RESET")
-        self.btn_reset.setMinimumHeight(35); self.btn_reset.setFixedWidth(80)
+        self.btn_reset = QPushButton("RESET"); self.btn_reset.setMinimumHeight(35); self.btn_reset.setFixedWidth(80)
         self.btn_reset.setStyleSheet("background-color: #555555; color: white; font-weight: bold;")
         self.btn_reset.clicked.connect(self.reset_to_defaults)
-        self.btn_exit = QPushButton("EXIT")
-        self.btn_exit.setMinimumHeight(35); self.btn_exit.setFixedWidth(80)
+        self.btn_exit = QPushButton("EXIT"); self.btn_exit.setMinimumHeight(35); self.btn_exit.setFixedWidth(80)
         self.btn_exit.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold;")
         self.btn_exit.clicked.connect(self.close)
         lay.addWidget(self.btn_back); lay.addWidget(self.btn_next); lay.addStretch()
@@ -381,7 +391,4 @@ class AirshipGUI(QMainWindow):
         return nav
 
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    ex = AirshipGUI()
-    ex.show()
-    sys.exit(app.exec())
+    app = QApplication(sys.argv); ex = AirshipGUI(); ex.show(); sys.exit(app.exec())
