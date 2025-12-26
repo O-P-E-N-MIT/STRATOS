@@ -79,12 +79,13 @@ class AirshipGUI(QMainWindow):
         self.setWindowTitle("Airship Geometry Generator | Salome Interface")
         self.setGeometry(100, 100, 1200, 900)
         self.salome_path = r"C:\SALOME-9.15.0\run_SALOME.bat"
-        self.base_output_directory = os.path.join(os.getcwd(), "output")
-        self.current_session_folder = self.base_output_directory # Default fallback
 
+        # Consistent Base Path
+        self.base_output_directory = os.path.join(os.path.expanduser("~"), "Documents", "Airship_Outputs")
         if not os.path.exists(self.base_output_directory):
             os.makedirs(self.base_output_directory)
 
+        self.current_session_folder = self.base_output_directory
         self.inputs = {}
         self.setup_style()
         self.central_widget = QWidget()
@@ -150,6 +151,7 @@ class AirshipGUI(QMainWindow):
             QComboBox#LargeDropdown { background-color: #3C3C3C; border: 2px solid #00BFFF; padding: 8px; border-radius: 4px; font-size: 11pt; font-weight: bold; color: #FFFFFF; }
             QPushButton { background-color: #3C3C3C; border: 1px solid #3c3c3c; padding: 8px; border-radius: 4px; color: #D4D4D4; }
             QPushButton:hover { background-color: #505050; border: 1px solid #00BFFF; }
+            QPushButton:disabled { background-color: #2a2a2a; color: #555555; border: 1px solid #2a2a2a; }
             QPushButton:checked { background-color: #00BFFF; color: #1e1e1e; font-weight: bold; }
         """)
 
@@ -199,20 +201,14 @@ class AirshipGUI(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         fin_dim_group = QGroupBox("Fin Dimensions")
         fin_dim_layout = QGridLayout(fin_dim_group)
-
         self.inputs["FIN_RC_LENGTH"] = LabeledSlider("Root Chord Length", 5.0, 50.0, 15.5, 0.1, 1)
         self.inputs["FIN_HEIGHT"] = LabeledSlider("Fin Height (Span)", 5.0, 50.0, 15.5, 0.1, 1)
         self.inputs["FIN_THICKNESS"] = LabeledSlider("Thickness (% of RC)", 1.0, 20.0, 10.0, 0.1, 1)
         self.inputs["FIN_TAPER_RATIO"] = LabeledSlider("Taper Ratio (Tip/Root)", 0.1, 1.0, 0.55, 0.01, 2)
         self.inputs["FIN_AXIAL_OFFSET"] = LabeledSlider("Axial Offset (% Length)", 50.0, 100.0, 80.0, 0.1, 1)
         self.inputs["FIN_SECTION_RESOLUTION"] = LabeledSlider("Section Resolution", 10, 100, 60, 1, decimals=0)
-
-        fin_dim_layout.addWidget(self.inputs["FIN_RC_LENGTH"], 0, 0)
-        fin_dim_layout.addWidget(self.inputs["FIN_HEIGHT"], 0, 1)
-        fin_dim_layout.addWidget(self.inputs["FIN_THICKNESS"], 0, 2)
-        fin_dim_layout.addWidget(self.inputs["FIN_TAPER_RATIO"], 1, 0)
-        fin_dim_layout.addWidget(self.inputs["FIN_AXIAL_OFFSET"], 1, 1)
-        fin_dim_layout.addWidget(self.inputs["FIN_SECTION_RESOLUTION"], 1, 2)
+        fin_dim_layout.addWidget(self.inputs["FIN_RC_LENGTH"], 0, 0); fin_dim_layout.addWidget(self.inputs["FIN_HEIGHT"], 0, 1); fin_dim_layout.addWidget(self.inputs["FIN_THICKNESS"], 0, 2)
+        fin_dim_layout.addWidget(self.inputs["FIN_TAPER_RATIO"], 1, 0); fin_dim_layout.addWidget(self.inputs["FIN_AXIAL_OFFSET"], 1, 1); fin_dim_layout.addWidget(self.inputs["FIN_SECTION_RESOLUTION"], 1, 2)
         main_layout.addWidget(fin_dim_group)
 
         fin_sweep_group = QGroupBox("Fin Sweep and Configuration")
@@ -220,12 +216,8 @@ class AirshipGUI(QMainWindow):
         self.inputs["FIN_SWEEP_ANGLE"] = LabeledSlider("Sweep Angle (Deg)", 0.0, 45.0, 0.0, 0.1, 1)
         self.inputs["FIN_TIP_ANGLE"] = LabeledSlider("Tip Angle (Deg)", 0.0, 30.0, 15.0, 0.1, 1)
         self.inputs["FIN_NUMBER"] = LabeledSlider("N Fins", 2, 8, 4, 1, decimals=0)
-
-        fin_sweep_layout.addWidget(self.inputs["FIN_SWEEP_ANGLE"], 0, 0)
-        fin_sweep_layout.addWidget(self.inputs["FIN_TIP_ANGLE"], 0, 1)
-        fin_sweep_layout.addWidget(QLabel("Number of Fins:"), 1, 0)
-        fin_sweep_layout.addWidget(self.inputs["FIN_NUMBER"], 1, 1)
-
+        fin_sweep_layout.addWidget(self.inputs["FIN_SWEEP_ANGLE"], 0, 0); fin_sweep_layout.addWidget(self.inputs["FIN_TIP_ANGLE"], 0, 1)
+        fin_sweep_layout.addWidget(QLabel("Number of Fins:"), 1, 0); fin_sweep_layout.addWidget(self.inputs["FIN_NUMBER"], 1, 1)
         fin_sweep_layout.addWidget(QLabel("Angular Positions (Comma Separated):"), 2, 0)
         self.inputs["FIN_THETA_POS_TEXT"] = QLineEdit("0.0, 90.0, 180.0, 270.0")
         fin_sweep_layout.addWidget(self.inputs["FIN_THETA_POS_TEXT"], 2, 1, 1, 2)
@@ -254,14 +246,15 @@ class AirshipGUI(QMainWindow):
         layout.addLayout(h_lay)
 
         btn_lay = QHBoxLayout()
-        rb = QPushButton("RUN GENERATION")
-        rb.setMinimumHeight(35); rb.setStyleSheet("background-color: #007ACC; color: white;")
-        rb.clicked.connect(self.run_process)
+        self.btn_run = QPushButton("RUN GENERATION")
+        self.btn_run.setMinimumHeight(35); self.btn_run.setStyleSheet("background-color: #007ACC; color: white;")
+        self.btn_run.clicked.connect(self.run_process)
 
-        pb = QPushButton("PLOT 2D PETAL")
-        pb.setMinimumHeight(35); pb.clicked.connect(self.generate_plot)
+        self.btn_plot = QPushButton("PLOT 2D PETAL")
+        self.btn_plot.setMinimumHeight(35); self.btn_plot.setEnabled(False)
+        self.btn_plot.clicked.connect(self.generate_plot)
 
-        btn_lay.addWidget(rb); btn_lay.addWidget(pb); layout.addLayout(btn_lay)
+        btn_lay.addWidget(self.btn_run); btn_lay.addWidget(self.btn_plot); layout.addLayout(btn_lay)
         self.log = QTextEdit("Status: Ready"); self.log.setReadOnly(True); layout.addWidget(self.log)
 
     def browse_output_directory(self):
@@ -269,21 +262,26 @@ class AirshipGUI(QMainWindow):
         if selected_dir:
             self.base_output_directory = selected_dir
             self.dir_path_display.setText(selected_dir)
-            self.current_session_folder = selected_dir # Update fallback
+            self.current_session_folder = selected_dir
 
     def create_new_output_folder(self):
-        """Creates and returns the path for a new folder (Output_N)."""
-        existing = [d for d in os.listdir(self.base_output_directory) if os.path.isdir(os.path.join(self.base_output_directory, d))]
+        """Robustly finds the next available Output_N folder in the current base directory."""
+        if not os.path.exists(self.base_output_directory):
+            os.makedirs(self.base_output_directory)
+
+        # Scan the folder for existing folders matching the pattern
+        existing_items = os.listdir(self.base_output_directory)
         indices = []
-        for d in existing:
-            match = re.match(r"Output_(\d+)", d)
-            if match:
-                indices.append(int(match.group(1)))
+        for item in existing_items:
+            if os.path.isdir(os.path.join(self.base_output_directory, item)):
+                match = re.match(r"Output_(\d+)", item)
+                if match:
+                    indices.append(int(match.group(1)))
 
         next_idx = max(indices) + 1 if indices else 1
         new_folder = os.path.join(self.base_output_directory, f"Output_{next_idx}")
         os.makedirs(new_folder)
-        self.current_session_folder = new_folder # Store for subsequent petal plots
+        self.current_session_folder = new_folder
         return new_folder
 
     def get_parameters(self, target_dir):
@@ -327,16 +325,12 @@ class AirshipGUI(QMainWindow):
 
     def run_process(self):
         if AirshipGeometry is None: return
-        # CREATE NEW FOLDER ONLY HERE
         target_dir = self.create_new_output_folder()
         p = self.get_parameters(target_dir)
         if p is None: return
-
         fmt_idx = self.format_button_group.checkedId()
-        fmt_ext = [".brep", ".stl", ".step"][fmt_idx]
-        fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
+        fmt_ext = [".brep", ".stl", ".step"][fmt_idx]; fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
         export_path = os.path.join(target_dir, p["FINAL_OBJECT_NAME"] + fmt_ext)
-
         try:
             g = AirshipGeometry(p, self.salome_path)
             original_generate = g._generate_salome_script
@@ -351,13 +345,13 @@ class AirshipGUI(QMainWindow):
                 with open(path, 'w') as f: f.write(content)
                 return path
             g._generate_salome_script = patched_generate
-            g.run_salome(True, p["FINAL_OBJECT_NAME"] + fmt_ext, fmt_name)
-            self.log.append(f"Full generation saved in: {target_dir}")
+            g.run_salome(False, p["FINAL_OBJECT_NAME"] + fmt_ext, fmt_name)
+            self.btn_plot.setEnabled(True)
+            self.log.append(f"Geometry saved in: {target_dir}")
         except Exception as e: self.log.append(f"Error: {e}")
 
     def generate_plot(self):
         if calculate_petal_coordinates is None: return
-        # USE MOST RECENT FOLDER (OR BASE IF NO RUN YET)
         target_dir = self.current_session_folder
         p = self.get_parameters(target_dir)
         if p is None: return
@@ -366,7 +360,7 @@ class AirshipGUI(QMainWindow):
             coords, nx, nc = calculate_petal_coordinates(p, L, int(p["N_PETALS"]))
             dat_file = os.path.join(target_dir, p["FINAL_OBJECT_NAME"]+".dat")
             msg = plot_and_save_profile(coords, p["FINAL_OBJECT_NAME"], dat_file, nx, nc, int(p["N_PETALS"]))
-            self.log.append(f"Petal plot saved in: {target_dir}")
+            self.log.append(f"Plot saved in: {target_dir}")
         except Exception as e: self.log.append(f"Plot Error: {e}")
 
     def load_defaults(self): self.load_preset(0)
