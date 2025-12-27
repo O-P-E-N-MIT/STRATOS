@@ -15,11 +15,14 @@ except ImportError:
 
 STANDARD_ENVELOPES = {
     "Sphere":   (0.500, 0.500,  0.500,  0.667, 1.000),
-    "GNVR":     (0.415, 0.600,  0.180,  0.615, 3.044),
-    "ZHIYUAN-1":(0.419, 0.337,  0.251,  0.651, 3.266),
-    "Wang":     (0.404, 0.600,  0.100,  0.610, 3.859),
-    "NPL":      (0.432, 0.589,  0.425,  0.667, 4.000),
+    "GNVR":     (0.4143, 0.5999, 0.1762, 0.6163, 3.0500),
+    "ZHIYUAN-1":(0.4193, 0.3306, 0.2500, 0.6489, 3.2592),
+    "Wang":     (0.4040, 0.6000, 0.1000, 0.6100, 3.8540),
+    "NPL":      (0.4319, 0.5886, 0.4248, 0.6667, 4.0000),
     "LOTTE":    (0.4502, 0.5759, 0.1000, 0.5170, 3.902),
+    "Garg": (0.5001, 0.4616, 0.4601, 0.7, 3.2093),
+    "Ellipsoid": (0.5, 0.5, 0.5001, 0.6667, 4.9999),
+    "SkyShip Profile": (0.409273399535807, 0.652171841644409, 0.100002973853950, 0.613129461580516, 3.86921733996695),
     "Custom":   (0.415, 0.600, 0.180, 0.615, 3.044),
 }
 
@@ -111,16 +114,13 @@ def calculate_petal_coordinates(params, hull_length, num_petals, num_points_x=NU
 
         for j in range(num_points_c):
             phi = Phi[j]
-            C = r * phi # C is the circumferential distance in the developed 2D plane
+            C = r * phi
 
             coords_2D.append((x, C))
 
     return coords_2D, num_points_x, num_points_c
 
-# --- NEW FUNCTION FOR .DAT FILE GENERATION ---
-
 def write_dat_file(coords_2D, dat_filename, num_points_x, num_points_c):
-    """Writes 2D coordinates to a .dat file in a grid format."""
     try:
         with open(dat_filename, 'w') as f:
             f.write(f"# 2D Developed Petal Coordinates\n")
@@ -135,14 +135,10 @@ def write_dat_file(coords_2D, dat_filename, num_points_x, num_points_c):
     except Exception as e:
         return f"Error generating DAT file:\n{e}"
 
-# --- MODIFIED FUNCTION TO INCLUDE .DAT GENERATION ---
-
 def plot_and_save_profile(coords_2D, shape_name, dat_filename, num_points_x, num_points_c, num_petals):
-    # 1. Generate the .DAT file
     dat_result = write_dat_file(coords_2D, dat_filename, num_points_x, num_points_c)
     plot_result = ""
 
-    # 2. Generate the .PNG plot
     if plt is None:
         plot_result = "\nMatplotlib not available. Cannot generate 2D plot."
     else:
@@ -208,21 +204,23 @@ class AirshipGeometry:
         script_filename = os.path.splitext(export_file)[0] + "_salome_script.py"
         script_path = os.path.join(self.output_directory, script_filename)
 
-        # safe_output_dir = self.output_directory.replace(os.path.sep, '/')
         safe_output_dir_host = os.path.normpath(self.output_directory)
 
         script_content = ["# INPUT PARAMETERS START"]
 
-        # If VOLUME is provided in parameters.
         if "VOLUME" in self.params:
             self.params["ENVELOPE_LENGTH"] = GertlerEnvelope.from_parameters_volume(self.params["ENVELOPE_PARAMS"], self.params["VOLUME"], self.params["ENVELOPE_RESOLUTION"], self.params["LOBE_NUMBER"], self.params["LOBE_OFFSET_X"], self.params["LOBE_OFFSET_Y"], self.params["LOBE_OFFSET_Z"]).length
 
-        # TODO: These are adjustments for the time being. Make components in GUI to add these and remove the
-        # MULTI_LOBE_OFFSET_FACTOR option.
         self.params.setdefault("ENVELOPE_TRUNCATION_RATIO", 0)
         self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params["ENVELOPE_PARAMS"])
         self.params.setdefault("CENTRAL_LOBE_LENGTH", self.params["ENVELOPE_LENGTH"])
-        del self.params["MULTI_LOBE_OFFSET_FACTOR"]
+
+        # Ensure INCLUDE_FINS is passed to the script
+        if "INCLUDE_FINS" not in self.params:
+            self.params["INCLUDE_FINS"] = True
+
+        if "MULTI_LOBE_OFFSET_FACTOR" in self.params:
+            del self.params["MULTI_LOBE_OFFSET_FACTOR"]
 
         for key, value in self.params.items():
             if isinstance(value, str):
@@ -233,6 +231,8 @@ class AirshipGeometry:
                     script_content.append(f"{key} = '{value}'")
             elif isinstance(value, float):
                 script_content.append(f"{key} = {int(value) if value.is_integer() else value}")
+            elif isinstance(value, bool):
+                script_content.append(f"{key} = {value}")
             else:
                 script_content.append(f"{key} = {value}")
 
