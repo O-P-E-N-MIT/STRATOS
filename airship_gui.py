@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QComboBox, QSlider, QSizePolicy, QGroupBox,
     QMessageBox, QFileDialog, QTextEdit, QSpacerItem,
-    QRadioButton, QButtonGroup
+    QRadioButton, QButtonGroup, QCheckBox
 )
 from PySide6.QtGui import QFont, QDoubleValidator
 from PySide6.QtCore import Qt, Signal
@@ -82,9 +82,7 @@ class AirshipGUI(QMainWindow):
         self.setWindowTitle("Airship Geometry Generator | Salome Interface")
         self.setGeometry(100, 100, 1200, 900)
 
-        # --- Change it as per your system setup. ---
         self.salome_path = r"C:\SALOME-9.15.0\run_SALOME.bat"
-
         self.base_output_directory = os.path.join(os.path.expanduser("~"), "Documents", "Airship_Outputs")
         if not os.path.exists(self.base_output_directory):
             os.makedirs(self.base_output_directory)
@@ -157,6 +155,18 @@ class AirshipGUI(QMainWindow):
             QPushButton:hover { background-color: #505050; border: 1px solid #00BFFF; }
             QPushButton:disabled { background-color: #2a2a2a; color: #555555; border: 1px solid #2a2a2a; }
             QPushButton:checked { background-color: #00BFFF; color: #1e1e1e; font-weight: bold; }
+            
+            QCheckBox#FinToggle { 
+                color: #FFFFFF; 
+                font-size: 12pt; 
+                font-weight: bold; 
+                padding: 10px; 
+                background-color: #2D2D2D; 
+                border: 2px solid #00BFFF; 
+                border-radius: 5px;
+            }
+            QCheckBox#FinToggle::indicator { width: 25px; height: 25px; }
+            QCheckBox#FinToggle:hover { background-color: #3D3D3D; }
         """)
 
     def setup_primary_tab_layout(self):
@@ -193,13 +203,10 @@ class AirshipGUI(QMainWindow):
         if is_multi: self.tab_widget.addTab(self.fairings_tab, "Multi-Lobe Configuration")
         self.tab_widget.addTab(self.fin_tab, "Fin Design")
         self.tab_widget.addTab(self.output_tab, "Output")
-        self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1)); self.tab_widget.blockSignals(False)
 
     def setup_fairings_tab(self):
         layout = QVBoxLayout(self.fairings_tab)
-
-        # 1. Lobe Offsets First (Stacked vertically)
         self.offset_box = QGroupBox("Lobe Separation Offsets")
         ol = QVBoxLayout(self.offset_box)
         self.inputs["LOBE_OFFSET_X_SLIDER"] = LabeledSlider("X Offset (Longitudinal)", 0, 50, 0, 0.1, 1)
@@ -210,18 +217,29 @@ class AirshipGUI(QMainWindow):
         ol.addWidget(self.inputs["LOBE_OFFSET_Z_SLIDER"])
         layout.addWidget(self.offset_box)
 
-        # 2. Sheet Length Second
         sheet_grp = QGroupBox("Fairing Geometry")
         sl = QVBoxLayout(sheet_grp)
         self.inputs["SHEET_LENGTH_RATIO_SLIDER"] = LabeledSlider("Sheet Length Ratio (0-1)", 0, 1, 0.5, 0.01, 2)
         sl.addWidget(self.inputs["SHEET_LENGTH_RATIO_SLIDER"])
         layout.addWidget(sheet_grp)
-
         layout.addStretch()
 
     def setup_fin_tab(self):
         main_layout = QVBoxLayout(self.fin_tab)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+
+        # 1. High Visibility Toggle First
+        self.inputs["INCLUDE_FINS"] = QCheckBox("GENERATE FINS WITH HULL")
+        self.inputs["INCLUDE_FINS"].setObjectName("FinToggle")
+        self.inputs["INCLUDE_FINS"].setChecked(True)
+        self.inputs["INCLUDE_FINS"].toggled.connect(self._toggle_fin_inputs)
+        main_layout.addWidget(self.inputs["INCLUDE_FINS"])
+
+        # 2. Grouped Dimensions
+        self.fin_container = QWidget()
+        container_layout = QVBoxLayout(self.fin_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
         fin_dim_group = QGroupBox("Fin Dimensions")
         fin_dim_layout = QGridLayout(fin_dim_group)
         self.inputs["FIN_RC_LENGTH"] = LabeledSlider("Root Chord Length", 5.0, 50.0, 15.5, 0.1, 1)
@@ -230,21 +248,30 @@ class AirshipGUI(QMainWindow):
         self.inputs["FIN_TAPER_RATIO"] = LabeledSlider("Taper Ratio (Tip/Root)", 0.1, 1.0, 0.55, 0.01, 2)
         self.inputs["FIN_AXIAL_OFFSET"] = LabeledSlider("Axial Offset (% Length)", 50.0, 100.0, 80.0, 0.1, 1)
         self.inputs["FIN_SECTION_RESOLUTION"] = LabeledSlider("Section Resolution", 10, 100, 60, 1, decimals=0)
+
         fin_dim_layout.addWidget(self.inputs["FIN_RC_LENGTH"], 0, 0); fin_dim_layout.addWidget(self.inputs["FIN_HEIGHT"], 0, 1); fin_dim_layout.addWidget(self.inputs["FIN_THICKNESS"], 0, 2)
         fin_dim_layout.addWidget(self.inputs["FIN_TAPER_RATIO"], 1, 0); fin_dim_layout.addWidget(self.inputs["FIN_AXIAL_OFFSET"], 1, 1); fin_dim_layout.addWidget(self.inputs["FIN_SECTION_RESOLUTION"], 1, 2)
-        main_layout.addWidget(fin_dim_group)
+        container_layout.addWidget(fin_dim_group)
 
         fin_sweep_group = QGroupBox("Fin Sweep and Configuration")
         fin_sweep_layout = QGridLayout(fin_sweep_group)
         self.inputs["FIN_SWEEP_ANGLE"] = LabeledSlider("Sweep Angle (Deg)", 0.0, 45.0, 0.0, 0.1, 1)
         self.inputs["FIN_TIP_ANGLE"] = LabeledSlider("Tip Angle (Deg)", 0.0, 30.0, 15.0, 0.1, 1)
         self.inputs["FIN_NUMBER"] = LabeledSlider("N Fins", 2, 8, 4, 1, decimals=0)
+
         fin_sweep_layout.addWidget(self.inputs["FIN_SWEEP_ANGLE"], 0, 0); fin_sweep_layout.addWidget(self.inputs["FIN_TIP_ANGLE"], 0, 1)
         fin_sweep_layout.addWidget(QLabel("Number of Fins:"), 1, 0); fin_sweep_layout.addWidget(self.inputs["FIN_NUMBER"], 1, 1)
         fin_sweep_layout.addWidget(QLabel("Angular Positions (Comma Separated):"), 2, 0)
         self.inputs["FIN_THETA_POS_TEXT"] = QLineEdit("0.0, 90.0, 180.0, 270.0")
         fin_sweep_layout.addWidget(self.inputs["FIN_THETA_POS_TEXT"], 2, 1, 1, 2)
-        main_layout.addWidget(fin_sweep_group); main_layout.addStretch(1)
+        container_layout.addWidget(fin_sweep_group)
+
+        main_layout.addWidget(self.fin_container)
+        main_layout.addStretch(1)
+
+    def _toggle_fin_inputs(self, enabled):
+        """Disables all fin input sliders and text editors."""
+        self.fin_container.setEnabled(enabled)
 
     def setup_output_tab(self):
         layout = QVBoxLayout(self.output_tab)
@@ -322,6 +349,7 @@ class AirshipGUI(QMainWindow):
         p["ENVELOPE_PARAMS"] = (p["m1"], p["r0"], p["r1"], p["cp"], p["l2d"])
         p["FINAL_OBJECT_NAME"] = self.inputs["FINAL_OBJECT_NAME"].text()
         p["type"] = self.preset_combo.currentText().split(" ")[0]
+        p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
 
         is_vol = self.mode_button_group.checkedId() == 2
         hull_len = p.get("ENVELOPE_LENGTH", 100.0)
