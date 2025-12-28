@@ -8,40 +8,39 @@
 
 ### About
 
-FALCON is an open-source Python-based GUI framework designed to facilitate airfoil design, analysis, and optimization. It integrates airfoil parametrization techniques (CST and PARSEC), low-fidelity aerodynamic analysis using XFOIL, automated meshing with GMSH, and high-fidelity CFD simulations via SU2 (with automated post processing). The framework aims to streamline the airfoil design process by providing a user-friendly interface and automating various stages of analysis and optimization.
+The Airship Geometry Generator is an open-source Python-based framework designed to facilitate the design and 3D modeling of advanced airship hull geometries. It specializes in Gertler Envelope parametrization, allowing users to define complex aerodynamic shapes through specific geometric coefficients like maximum thickness position, nose/tail radii, and prismatic coefficients. The framework integrates with SALOME for automated 3D CAD generation and features a developed 2D petal (gore) generator for manufacturing preparation.
 
 ### Features
 
 * User-friendly and easily accesible GUI.
 
-* Airfoil parametrization using CST and PARSEC techniques.
+* Support for Monolobe, Bilobe and Trilobe hull design with adjustable separation offset.
 
-* Embedded XFOIL for low-fidelity aerodynamic analysis.
+* Precise control over hull shapes using $m1$, $r0$, $r1$, $cp$ and $l/d$ coefficients.
 
-* Automated meshing using GMSH
+* Automated generation of fins based on NACA 4-digit airfoil profile with adjustable sweep, taper and axial positioning.
 
-* CFD analyses via SU2 with automated post-processing.
+* Automated calculation of hull length based on a target volume requirement and lobe configuration.
 
-* Validated solver settings are pre-chosen on the basis of the given initial conditions.
+* Generates developed 2D petal (gore) coordinates and plots for fabric cutting and manufacturing.
 
-* Real-time residual monitoring
+* Scripted interface with SALOME for exporting high-fidelity 3D models in .STL, .BREP, or .STEP formats.
 
 ### Pre-requisites
 
-* SU2 $\rightarrow$ https://su2code.github.io/ $\rightarrow$ Can be installed with or without MPI
+* To use this tool, ensure the following software is installed:
 
-* XFoil $\rightarrow$ https://web.mit.edu/drela/Public/web/xfoil/
-
-* Python $\rightarrow$ https://www.python.org/downloads/
-
+* SALOME: https://www.salome-platform.org/
+  
+* Python: https://www.python.org/downloads/
+  
 * Python specific packages $\rightarrow$
 
     - numpy
     - matplotlib
     - scipy
-    - PySimpleGUI
-    - pandas
-    - gmsh
+    - PySide6
+    - shapely
 
 ### Installation
 
@@ -51,16 +50,26 @@ python -m pip install -r requirements.txt
 
 ### Usage
 
+* Open airship_gui.py and update the self.salome_path variable to point to your SALOME installation executable (e.g., run_SALOME.bat).
+
+* Run airship_gui.py
+  
 ```bash
-python3 main.py
+python3 airship_gui.py
 ```
 
+* Set the Gertler parameters or select a standard preset in the Standard Envelope dropdown.
+
+* Select the number of lobes and set separation offsets.
+
+* Configure fin dimensions or uncheck "GENERATE FINS WITH HULL" for a hull-only model.
+
+* Click RUN GENERATION in the Output tab to trigger the SALOME script and export your 3D model.
+
 ### References
-1. Drela, M. (1989). XFOIL: An Analysis and Design System for Low Reynolds Number Airfoils. In: Mueller, T.J. (eds) Low Reynolds Number Aerodynamics. Lecture Notes in Engineering, vol 54. Springer, Berlin, Heidelberg. https://doi.org/10.1007/978-3-642-84010-4_1
+1. Manikandan, M., Shah, R. R., Priyan, P., Singh, B., & Pant, R. S. (2023). A parametric design approach for multi-lobed hybrid airships. The Aeronautical Journal, 128(1319), 1–36. https://doi.org/10.1017/aer.2023.37
 
-2. SU2: An Open-Source Suite for Multiphysics Simulation and Design Thomas D. Economon, Francisco Palacios, Sean R. Copeland, Trent W. Lukaczyk, and Juan J. Alonso, AIAA Journal 2016 54:3, 828-846. https://doi.org/10.2514/1.J053813
+2. Pai, A., & Manikandan, M. (2025). A comparative study of aerodynamic characteristics of conventional and multi-lobed airships. The Aeronautical Journal, 129(1339), 2435–2459. https://doi.org/10.1017/aer.2025.39
 
-2. Kulfan, B.M. Universal parametric geometry representation method. J. Aircr. 2008, 45, 142–158. https://doi.org/10.2514/1.29958
-
-3. Sobieczky, H., “Parametric Airfoils and Wings,” Recent Development of Aerodynamic Design Methodologies, Springer, New York, 1999, pp. 71–87. https://doi.org/10.1007/978-3-322-89952-1_4
+3. Alam, M. I., & Pant, R. S. (2017, June 2). Surrogate based shape optimization of airship envelopes. In AIAA | ARC. https://doi.org/10.2514/6.2017-3393
 
