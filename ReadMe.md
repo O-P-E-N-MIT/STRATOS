@@ -76,5 +76,5 @@ Anantha Hari Arun Pedapudi, Sudarsan D. Naidu, and Manikandan Murugaiah "XXXXXX:
 
 2. Pai, A., & Manikandan, M. (2025). A comparative study of aerodynamic characteristics of conventional and multi-lobed airships. The Aeronautical Journal, 129(1339), 2435–2459. https://doi.org/10.1017/aer.2025.39
 
-3. Alam, M. I., & Pant, R. S. (2017, June 2). Surrogate based shape optimization of airship envelopes. In AIAA | ARC. https://doi.org/10.2514/6.2017-3393
+3. Alam, M. I., & Pant, R. S. (2017). Surrogate based shape optimization of airship envelopes. In AIAA | ARC. https://doi.org/10.2514/6.2017-3393
 
