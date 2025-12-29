@@ -30,7 +30,7 @@ The Airship Geometry Generator is an open-source Python-based framework designed
 
 * To use this tool, ensure the following software is installed:
 
-* SALOME: https://www.salome-platform.org/
+* SALOME: https://www.salome-platform.org/ $\rightarrow$ Verify that the path of the executable is stored in the C:\SALOME-9.15.0.
   
 * Python: https://www.python.org/downloads/
   
