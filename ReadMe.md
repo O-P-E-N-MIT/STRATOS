@@ -12,7 +12,7 @@ The Airship Geometry Generator is an open-source Python-based framework designed
 
 ### Features
 
-* User-friendly and easily accessible GUI.
+--> User-friendly and easily accessible GUI.
 
 * Support for Conventional, Bilobe, and Trilobe hull design with adjustable separation offset.
 
