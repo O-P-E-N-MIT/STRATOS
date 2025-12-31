@@ -11,30 +11,34 @@
 # t = Maximum thickness as percentage of chord
 
 import numpy as np
-from scipy.optimize import fsolve
 
-# This is done because Shapely is not available in Salome python environment. We need Shapely only for trilobe
-# volume calculation which is calculated only in the backend.
 try:
     from shapely import Point
     from shapely.ops import unary_union
 except ImportError:
-    Point = None
-    unary_union = None
-    print("Warning: Shapely not found. Trilobe volume calculations will be mocked.")
+    print("Shapely not found. Trilobe volume calculations will be mocked.")
 
+try:
+    from scipy.optimize import fsolve
+except ImportError:
+    print("Scipy not found. Volumetric generation will be mocked.")
+
+# Standard preset envelopes.
 STANDARD_ENVELOPES = {
-    "Sphere":   (0.500, 0.500,  0.500,  0.667, 1.000),
-    "GNVR":     (0.4143, 0.5999, 0.1762, 0.6163, 3.0500),
-    "ZHIYUAN-1":(0.4193, 0.3306, 0.2500, 0.6489, 3.2592),
-    "Wang":     (0.4040, 0.6000, 0.1000, 0.6100, 3.8540),
-    "NPL":      (0.4319, 0.5886, 0.4248, 0.6667, 4.0000),
-    "LOTTE":    (0.4502, 0.5759, 0.1000, 0.5170, 3.902),
-    "Garg": (0.5001, 0.4616, 0.4601, 0.7, 3.2093),
-    "Ellipsoid": (0.5, 0.5, 0.5001, 0.6667, 4.9999),
-    "SkyShip Profile": (0.409273399535807, 0.652171841644409, 0.100002973853950, 0.613129461580516, 3.86921733996695),
-    "Custom":   (0.415, 0.600, 0.180, 0.615, 3.044),
+    "Sphere":       (0.5000, 0.5000, 0.5000, 0.6670, 1.0000),
+    "GNVR":         (0.4143, 0.5999, 0.1762, 0.6163, 3.0500),
+    "ZHIYUAN-1":    (0.4193, 0.3306, 0.2500, 0.6489, 3.2592),
+    "Wang":         (0.4040, 0.6000, 0.1000, 0.6100, 3.8540),
+    "NPL":          (0.4319, 0.5886, 0.4248, 0.6667, 4.0000),
+    "LOTTE":        (0.4502, 0.5759, 0.1000, 0.5170, 3.9020),
+    "Garg":         (0.5001, 0.4616, 0.4601, 0.7000, 3.2093),
+    "Ellipsoid":    (0.5000, 0.5000, 0.5001, 0.6667, 4.9999),
+    "SkyShip":      (0.4093, 0.6522, 0.1000, 0.6131, 3.8692),
+    "Custom":       (0.4150, 0.6000, 0.1800, 0.6150, 3.0440),
 }
+
+# A way to store the coefficients in the memory instead of computing it for the same parameters every time.
+GERTLER_COEFFICIENTS = {}
 
 class GertlerEnvelope:
 
@@ -78,22 +82,13 @@ class GertlerEnvelope:
         # Zipping elements maybe a bad idea.
         return zip(X, R) if tuples else (X, R)
     
-    def petal_coordinates (self, petal_number, circumferential_divisons):
+    # Returns petal coordinates
+    def petal_coordinates (self, petal_number, nc = 150):
         delta_phi = 2 * np.pi / petal_number
         phi_half_width = delta_phi / 2.0
-        Phi = np.linspace(-phi_half_width, phi_half_width, circumferential_divisons)
+        phi = np.linspace(-phi_half_width, phi_half_width, nc)
 
-        coords_2D = []
-
-        for x, r in self.points():
-            for j in range(circumferential_divisons):
-                phi = Phi[j]
-                # C = R(X) * phi
-                C = r * phi
-
-                coords_2D.append((x, C))
-
-        return coords_2D
+        return [(x, r * phi[j]) for x, r in self.points() for j in range(nc)]
     
     # Returns the volume of the envelope (mono lobe).
     def volume (self):
@@ -104,6 +99,11 @@ class GertlerEnvelope:
     def surface_area (self):
         X, R = self.points(tuples=False) 
         return np.trapezoid(2 * np.pi * R, X)
+    
+    # Returns the side projected area of the envelope (mono lobe and bi lobe).
+    def side_projected_area (self):
+        X, R = self.points(tuples=False)
+        return 2 * np.trapezoid(R, X)
     
     # Returns the volume of a bilobed envelope.
     #
@@ -133,6 +133,12 @@ class GertlerEnvelope:
 
         return np.trapezoid(P, X)
     
+    # Returns the top projected area of a bilobe.
+    def top_projected_area_bilobe (self, f):
+        X, R = self.points(tuples=False)
+        L = R + np.minimum(R, f)
+        return 2 * np.trapezoid(L, X)
+    
     # Returns the volume of a trilobed envelope.
     #
     # e = Distance of central lobe from Y axis
@@ -148,36 +154,41 @@ class GertlerEnvelope:
         # If central lobe is not provided, itself is taken as central lobe.
         X, R, R2 = get_trilobe_axis(self, central_lobe or self, e)
 
-        # Array of cross section area along the axis.
-        A = np.zeros_like(X)
-
-        for i in range(len(X)):
-            r = R[i]
-            r2 = R2[i]
-
-            # Union of all the circle areas
-            A[i] = unary_union([Point(-f, 0).buffer(r), Point(f, 0).buffer(r), Point(0, g).buffer(r2)]).area
+        # Array of cross section areas along the axis.
+        A = [unary_union([Point(-f, 0).buffer(R[i]), Point(f, 0).buffer(R[i]), Point(0, g).buffer(R2[i])]).area for i in range(len(X))]
 
         # Integrating the area of cross section to get the volume.
         return np.trapezoid(A, X)
     
     # Returns the surface area of a trilobe design.
     def surface_area_trilobe (self, e, f, g, central_lobe = None):
-        # If central lobe is not provided, itself is taken as central lobe.
         X, R, R2 = get_trilobe_axis(self, central_lobe or self, e)
 
-        # Array of perimeters along the axis.
-        P = np.zeros_like(X)
+        # Array of perimeters of cross section
+        P = [unary_union([Point(-f, 0).buffer(R[i]), Point(f, 0).buffer(R[i]), Point(0, g).buffer(R2[i])]).length for i in range(len(X))]
 
-        for i in range(len(X)):
-            r = R[i]
-            r2 = R2[i]
-
-            # Union of all the circle areas
-            P[i] = unary_union([Point(-f, 0).buffer(r), Point(f, 0).buffer(r), Point(0, g).buffer(r2)]).length
-
-        # Integrating the area of cross section to get the volume.
+        # Integrating the perimeters of the cross section to get the area.
         return np.trapezoid(P, X)
+    
+    # Returns the side projected area of a trilobe design.
+    def side_projected_area_trilobe (self, e, f, g, central_lobe = None):
+        X, R, R2 = get_trilobe_axis(self, central_lobe or self, e)
+
+        Y_TOP = np.minimum(R, g + R2)
+        Y_BOTTOM = np.maximum(-R, g - R2)
+        L = 2 * (R + R2) - np.maximum(0, Y_TOP - Y_BOTTOM)
+
+        return np.trapezoid(L, X)
+    
+    # Returns the top projected area of a trilobe design.
+    def top_projected_area_trilobe (self, e, f, g, central_lobe = None):
+        X, R, R2 = get_trilobe_axis(self, central_lobe or self, e)
+
+        Y_TOP = np.minimum(R + f, R2)
+        Y_BOTTOM = np.maximum(0, f - R)
+        L = R + R2 + np.minimum(R, f) + np.maximum(0, Y_TOP - Y_BOTTOM)
+
+        return 2 * np.trapezoid(L, X)
     
     # Returns the coordinates of points on the envelope which intercepts the trailing edge of a fin and the necessary intercept offset.
     def get_fin_intercept (self, x, rc):
@@ -200,6 +211,7 @@ class GertlerEnvelope:
 
             chord_length = ((x-x1)**2 + (y-y1)**2)**0.5
 
+        # If the final chord length is smaller than the root chord, it means the axial offset is too high for a fin to be placed on the hull.
         if chord_length < rc:
             raise Exception("GertlerEnvelope: Unable to find the trailing edge intercept for the given parameters.")
         
@@ -231,6 +243,10 @@ class GertlerEnvelope:
 
     # Returns the coefficients of the Gertler polynomial from standard parameters.
     def get_coefficients (params):
+        # If the coefficients for the given parameters have been computed already, send that.
+        if params in GERTLER_COEFFICIENTS:
+            return GERTLER_COEFFICIENTS[params]
+        
         (m, r0, r1, cp, _) = params
 
         A = np.array([   
@@ -243,7 +259,14 @@ class GertlerEnvelope:
         ], float)
 
         B = np.array([2*r0, 0, 1/4, 0, -2*r1, 1/4*cp], float).T
-        X = np.linalg.solve(A, B)
+        
+        try:
+            X = np.linalg.solve(A, B)
+        except np.linalg.LinAlgError:
+            print("[ERROR] Coefficient calculation for gertler envelope failed.")
+            return np.zeros(6)
+        
+        GERTLER_COEFFICIENTS[params] = X
         
         return np.round(X, 4)
     
@@ -339,14 +362,6 @@ def naca_airfoil_points (t, n, l = 1):
 
     yield 0, 0
 
-# Length scaling for fuzzy solve.
-def length_scaling (volume_function, target_volume, initial_estimate):
-    def f (l):
-        volume = volume_function(l)
-        return (target_volume - volume) / target_volume
-    
-    return fsolve(f, initial_estimate)[0]
-
 # Gets a common trilobe axis for both extreme and central lobe.
 def get_trilobe_axis (extreme_lobe, central_lobe, e):
     # Determining how long should the discretized X axis should be taken for calculation.
@@ -380,3 +395,11 @@ def get_trilobe_axis (extreme_lobe, central_lobe, e):
     R2 = central_lobe.diameter * np.sqrt(R2)
 
     return X, R, R2
+
+# Length scaling for volumetric generation.
+def length_scaling (volume_function, target_volume, initial_estimate):
+    def f (l):
+        volume = volume_function(l)
+        return (target_volume - volume) / target_volume
+    
+    return fsolve(f, initial_estimate)[0]

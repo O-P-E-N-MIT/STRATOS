@@ -1,34 +1,18 @@
 import sys
 import os
 import re
+
+from PySide6.QtGui import QFont, QDoubleValidator
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QSlider, QSizePolicy, QGroupBox,
-    QMessageBox, QFileDialog, QTextEdit, QSpacerItem,
-    QRadioButton, QButtonGroup, QCheckBox
+    QComboBox, QSlider, QGroupBox, QFileDialog, QTextEdit, 
+    QButtonGroup, QCheckBox
 )
-from PySide6.QtGui import QFont, QDoubleValidator
-from PySide6.QtCore import Qt, Signal
 
-# --- HARDCODED PRESETS ---
-STANDARD_ENVELOPES = {
-    "Sphere":   (0.500, 0.500,  0.500,  0.667, 1.000),
-    "GNVR":     (0.4143, 0.5999, 0.1762, 0.6163, 3.0500),
-    "ZHIYUAN-1":(0.4193, 0.3306, 0.2500, 0.6489, 3.2592),
-    "Wang":     (0.4040, 0.6000, 0.1000, 0.6100, 3.8540),
-    "NPL":      (0.4319, 0.5886, 0.4248, 0.6667, 4.0000),
-    "LOTTE":    (0.4502, 0.5759, 0.1000, 0.5170, 3.902),
-    "Garg": (0.5001, 0.4616, 0.4601, 0.7, 3.2093),
-    "Ellipsoid": (0.5, 0.5, 0.5001, 0.6667, 4.9999),
-    "SkyShip Profile": (0.409273399535807, 0.652171841644409, 0.100002973853950, 0.613129461580516, 3.86921733996695),
-    "Custom":   (0.415, 0.600, 0.180, 0.615, 3.044),
-}
-
-try:
-    from geometry import AirshipGeometry, calculate_petal_coordinates, plot_and_save_profile
-except ImportError:
-    AirshipGeometry = calculate_petal_coordinates = plot_and_save_profile = None
+from geometry import AirshipGeometry, plot_and_save_profile
+from geometry_handler import STANDARD_ENVELOPES
 
 class LabeledSlider (QGroupBox):
     value_changed_by_user = Signal(float)
@@ -209,9 +193,9 @@ class AirshipGUI(QMainWindow):
         layout = QVBoxLayout(self.fairings_tab)
         self.offset_box = QGroupBox("Lobe Separation Offsets")
         ol = QVBoxLayout(self.offset_box)
-        self.inputs["LOBE_OFFSET_X_SLIDER"] = LabeledSlider("X Offset (Longitudinal)", 0, 50, 0, 0.1, 1)
-        self.inputs["LOBE_OFFSET_Y_SLIDER"] = LabeledSlider("Y Offset (Lateral)", 0, 50, 0, 0.1, 1)
-        self.inputs["LOBE_OFFSET_Z_SLIDER"] = LabeledSlider("Z Offset (Vertical)", 0, 50, 0, 0.1, 1)
+        self.inputs["LOBE_OFFSET_X_SLIDER"] = LabeledSlider("X Offset (Longitudinal)", 0, 50, 10, 0.1, 1)
+        self.inputs["LOBE_OFFSET_Y_SLIDER"] = LabeledSlider("Y Offset (Lateral)", 0, 50, 10, 0.1, 1)
+        self.inputs["LOBE_OFFSET_Z_SLIDER"] = LabeledSlider("Z Offset (Vertical)", 0, 50, 10, 0.1, 1)
         ol.addWidget(self.inputs["LOBE_OFFSET_X_SLIDER"])
         ol.addWidget(self.inputs["LOBE_OFFSET_Y_SLIDER"])
         ol.addWidget(self.inputs["LOBE_OFFSET_Z_SLIDER"])
@@ -301,7 +285,7 @@ class AirshipGUI(QMainWindow):
         self.btn_run.clicked.connect(self.run_process)
 
         self.btn_plot = QPushButton("PLOT 2D PETAL")
-        self.btn_plot.setMinimumHeight(35); self.btn_plot.setEnabled(False)
+        self.btn_plot.setMinimumHeight(35); # self.btn_plot.setEnabled(False)
         self.btn_plot.clicked.connect(self.generate_plot)
 
         btn_lay.addWidget(self.btn_run); btn_lay.addWidget(self.btn_plot); layout.addLayout(btn_lay)
@@ -398,17 +382,15 @@ class AirshipGUI(QMainWindow):
         except Exception as e: self.log.append(f"Error: {e}")
 
     def generate_plot(self):
-        if calculate_petal_coordinates is None: return
         target_dir = self.current_session_folder
         p = self.get_parameters(target_dir)
         if p is None: return
         try:
-            L = p.get("ENVELOPE_LENGTH", 100.0)
-            coords, nx, nc = calculate_petal_coordinates(p, L, int(p["N_PETALS"]))
-            dat_file = os.path.join(target_dir, p["FINAL_OBJECT_NAME"]+".dat")
-            msg = plot_and_save_profile(coords, p["FINAL_OBJECT_NAME"], dat_file, nx, nc, int(p["N_PETALS"]))
+            dat_file = os.path.join(target_dir, f"{p["FINAL_OBJECT_NAME"]}.dat")
+            msg = plot_and_save_profile(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], int(p["ENVELOPE_RESOLUTION"]), int(p["N_PETALS"]), int(p["ENVELOPE_RESOLUTION"]), dat_file, p["FINAL_OBJECT_NAME"])
             self.log.append(f"Plot saved in: {target_dir}")
-        except Exception as e: self.log.append(f"Plot Error: {e}")
+        except Exception as e: 
+            self.log.append(f"Plot Error: {e}")
 
     def load_defaults(self): self.load_preset(0)
     def load_preset(self, idx):

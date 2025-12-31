@@ -69,10 +69,10 @@ def translate_object (object, x_offset, y_offset, z_offset):
 # Modelling of envelope
 # ---
 
-print('Generating Hull Profile...')
+print('[LOG] Generating Hull Profile...')
 
 def create_envelope (params, length):
-    print(f'Generating envelope having Gertler parameters {params}...')
+    print(f'[LOG] Generating envelope having Gertler parameters {params}...')
     gertler = geometry_handler.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
     envelope_vertices = [geompy.MakeVertex(x, y, 0) for x, y in gertler.points(ENVELOPE_TRUNCATION_RATIO)]
 
@@ -101,8 +101,10 @@ if LOBE_NUMBER == 3:
 # ---
 
 fins = []
+
 if INCLUDE_FINS:
-    print('Generating Fins...')
+    print('[LOG] Generating Fins...')
+
     RC_RADIAL_OFFSET = extreme_gertler.at(FIN_AXIAL_OFFSET)
     TC_RADIAL_OFFSET = RC_RADIAL_OFFSET + FIN_HEIGHT
     RC_AXIAL_OFFSET = FIN_AXIAL_OFFSET
@@ -141,10 +143,10 @@ if INCLUDE_FINS:
             fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(theta)), 0, -1, 0))
             fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(-theta)), 0, 1, 0))
 else:
-    print('Skipping Fin generation as per user choice.')
+    print('[LOG] Skipping fin generation as per user choice...')
 
 # ---
-# Modelling of Thin Fairings
+# Modelling of Thin Fairings (conditional)
 # ---
 
 fairings = []
@@ -155,8 +157,10 @@ def create_fairing_quad (p1, p2, p3, p4):
     fairings.append(geompy.MakePrismVecH2Ways(fairing, normal, 1e-7))
 
 if SHEET_LENGTH_RATIO:
-    print("Generating fairings...")
+    print("[LOG] Generating fairings...")
+
     SHEET_LENGTH = ENVELOPE_LENGTH * SHEET_LENGTH_RATIO
+
     if LOBE_NUMBER == 2:
         create_fairing_quad((ENVELOPE_LENGTH, -LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, -LOBE_OFFSET_Y, 0))
     elif LOBE_NUMBER == 3:
@@ -164,7 +168,8 @@ if SHEET_LENGTH_RATIO:
         create_fairing_quad((ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X, 0, LOBE_OFFSET_Z), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X - SHEET_LENGTH, 0, LOBE_OFFSET_Z))
 
 # Final Fusion Logic
-print('Generating final model...')
+print('[LOG] Generating final model...')
+
 Final_Hull_Solid = geompy.MakeFuseList(lobes + (fins if INCLUDE_FINS else []))
 Final_Hull_Solid = geompy.MakeCompound([Final_Hull_Solid] + fairings)
 Final_Hull_Solid_ID = geompy.addToStudy(Final_Hull_Solid, FINAL_OBJECT_NAME)
@@ -175,13 +180,14 @@ if salome.sg.hasDesktop():
     gg.setDisplayMode(Final_Hull_Solid_ID, 1)
     salome.sg.updateObjBrowser()
 
-print(f'Attempting to export to "{OUTPUT_FILE}"...')
+print(f'[LOG] Attempting to export to "{OUTPUT_FILE}"...')
 
 if OUTPUT_FORMAT == 'STL':
+    # The deflection used for STL generation is a default one because we can later work with it using MeshLab.
     geompy.ExportSTL(Final_Hull_Solid, OUTPUT_FILE, False)
 elif OUTPUT_FORMAT == 'BREP':
     geompy.ExportBREP(Final_Hull_Solid, OUTPUT_FILE)
 elif OUTPUT_FORMAT == 'STEP':
     geompy.ExportSTEP(Final_Hull_Solid, OUTPUT_FILE)
 
-print('Finished script. Waiting for user exit (MainLoop).')
+print(f'[LOG] Exported {OUTPUT_FORMAT} successfully. Waiting for user to exit (MainLoop)...')
