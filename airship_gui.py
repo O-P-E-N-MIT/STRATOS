@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QSlider, QGroupBox, QFileDialog, QTextEdit, 
+    QComboBox, QSlider, QGroupBox, QFileDialog, QTextEdit,
     QButtonGroup, QCheckBox
 )
 
@@ -93,6 +93,9 @@ class AirshipGUI(QMainWindow):
 
         self.main_layout.addWidget(self.tab_widget)
         self.main_layout.addWidget(self.setup_navigation_buttons())
+
+        # Connect tab change signal to navigation logic
+        self.tab_widget.currentChanged.connect(self._update_navigation_buttons)
 
         self.refresh_tabs()
         self.load_defaults()
@@ -188,6 +191,8 @@ class AirshipGUI(QMainWindow):
         self.tab_widget.addTab(self.fin_tab, "Fin Design")
         self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1)); self.tab_widget.blockSignals(False)
+        # Update buttons after tabs are rebuilt
+        self._update_navigation_buttons()
 
     def setup_fairings_tab(self):
         layout = QVBoxLayout(self.fairings_tab)
@@ -212,14 +217,12 @@ class AirshipGUI(QMainWindow):
         main_layout = QVBoxLayout(self.fin_tab)
         main_layout.setContentsMargins(15, 15, 15, 15)
 
-        # 1. High Visibility Toggle First
         self.inputs["INCLUDE_FINS"] = QCheckBox("GENERATE FINS WITH HULL")
         self.inputs["INCLUDE_FINS"].setObjectName("FinToggle")
         self.inputs["INCLUDE_FINS"].setChecked(True)
         self.inputs["INCLUDE_FINS"].toggled.connect(self._toggle_fin_inputs)
         main_layout.addWidget(self.inputs["INCLUDE_FINS"])
 
-        # 2. Grouped Dimensions
         self.fin_container = QWidget()
         container_layout = QVBoxLayout(self.fin_container)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -254,7 +257,6 @@ class AirshipGUI(QMainWindow):
         main_layout.addStretch(1)
 
     def _toggle_fin_inputs(self, enabled):
-        """Disables all fin input sliders and text editors."""
         self.fin_container.setEnabled(enabled)
 
     def setup_output_tab(self):
@@ -285,11 +287,38 @@ class AirshipGUI(QMainWindow):
         self.btn_run.clicked.connect(self.run_process)
 
         self.btn_plot = QPushButton("PLOT 2D PETAL")
-        self.btn_plot.setMinimumHeight(35); # self.btn_plot.setEnabled(False)
+        self.btn_plot.setMinimumHeight(35);
         self.btn_plot.clicked.connect(self.generate_plot)
 
         btn_lay.addWidget(self.btn_run); btn_lay.addWidget(self.btn_plot); layout.addLayout(btn_lay)
+
+        prop_group = QGroupBox("Calculated Geometric Properties")
+        prop_layout = QGridLayout(prop_group)
+        self.prop_outputs = {}
+        labels = ["Volume (m³):", "Surface Area (m²):", "Top Proj. Area (m²):", "Side Proj. Area (m²):"]
+        keys = ["vol", "surf", "top_area", "side_area"]
+
+        for i, (lbl, key) in enumerate(zip(labels, keys)):
+            prop_layout.addWidget(QLabel(lbl), i // 2, (i % 2) * 2)
+            self.prop_outputs[key] = QLineEdit("0.000")
+            self.prop_outputs[key].setReadOnly(True)
+            self.prop_outputs[key].setFixedWidth(120)
+            self.prop_outputs[key].setStyleSheet("background-color: #2D2D2D; color: #00BFFF; font-weight: bold;")
+            prop_layout.addWidget(self.prop_outputs[key], i // 2, (i % 2) * 2 + 1)
+
+        layout.addWidget(prop_group)
         self.log = QTextEdit("Status: Ready"); self.log.setReadOnly(True); layout.addWidget(self.log)
+
+    def _update_property_display(self, params):
+        try:
+            geom = AirshipGeometry(params, self.salome_path)
+            vol, surf, top, side = geom.geometric_properties()
+            self.prop_outputs["vol"].setText(f"{vol:.3f}")
+            self.prop_outputs["surf"].setText(f"{surf:.3f}")
+            self.prop_outputs["top_area"].setText(f"{top:.3f}")
+            self.prop_outputs["side_area"].setText(f"{side:.3f}")
+        except Exception as e:
+            self.log.append(f"Property Calculation Note: {e}")
 
     def browse_output_directory(self):
         selected_dir = QFileDialog.getExistingDirectory(self, "Select Base Output Directory", self.base_output_directory)
@@ -359,6 +388,7 @@ class AirshipGUI(QMainWindow):
         target_dir = self.create_new_output_folder()
         p = self.get_parameters(target_dir)
         if p is None: return
+        self._update_property_display(p)
         fmt_idx = self.format_button_group.checkedId()
         fmt_ext = [".brep", ".stl", ".step"][fmt_idx]; fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
         export_path = os.path.join(target_dir, p["FINAL_OBJECT_NAME"] + fmt_ext)
@@ -386,10 +416,10 @@ class AirshipGUI(QMainWindow):
         p = self.get_parameters(target_dir)
         if p is None: return
         try:
-            dat_file = os.path.join(target_dir, f"{p["FINAL_OBJECT_NAME"]}.dat")
+            dat_file = os.path.join(target_dir, f"{p['FINAL_OBJECT_NAME']}.dat")
             msg = plot_and_save_profile(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], int(p["ENVELOPE_RESOLUTION"]), int(p["N_PETALS"]), int(p["ENVELOPE_RESOLUTION"]), dat_file, p["FINAL_OBJECT_NAME"])
             self.log.append(f"Plot saved in: {target_dir}")
-        except Exception as e: 
+        except Exception as e:
             self.log.append(f"Plot Error: {e}")
 
     def load_defaults(self): self.load_preset(0)
@@ -401,6 +431,13 @@ class AirshipGUI(QMainWindow):
     def reset_to_defaults(self):
         self.load_preset(self.preset_combo.currentIndex())
         self.log.append("Parameters reset.")
+
+    def _update_navigation_buttons(self):
+        """Disables PREV on first tab and NEXT on last tab."""
+        idx = self.tab_widget.currentIndex()
+        count = self.tab_widget.count()
+        self.btn_back.setEnabled(idx > 0)
+        self.btn_next.setEnabled(idx < count - 1)
 
     def setup_navigation_buttons(self):
         nav = QWidget(); lay = QHBoxLayout(nav)
