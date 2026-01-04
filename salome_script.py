@@ -27,8 +27,8 @@ FIN_THETA_POS = None
 SHEET_LENGTH_RATIO = 0.75
 INCLUDE_FINS = True  # New parameter to control fin generation
 
-DIRECTORY_PATH = "D:\\Airships\\Salome\\output"
-OUTPUT_FILE = "D:\\Airships\\Salome\\output\\test.brep"
+DIRECTORY_PATH = "D:\\Airships\\GeometryModeller"
+OUTPUT_DIRECTORY = 'C:\\Airships\\GeometryModeller\\output'
 OUTPUT_FORMAT = "BREP"
 FINAL_OBJECT_NAME = "Airship"
 
@@ -39,6 +39,7 @@ import salome
 from salome.geom import geomBuilder
 import numpy as np
 import sys
+import os
 import importlib
 
 # Salome executes the python script files from its own directory so to import local modules, we have to
@@ -170,24 +171,32 @@ if SHEET_LENGTH_RATIO:
 # Final Fusion Logic
 print('[LOG] Generating final model...')
 
-Final_Hull_Solid = geompy.MakeFuseList(lobes + (fins if INCLUDE_FINS else []))
-Final_Hull_Solid = geompy.MakeCompound([Final_Hull_Solid] + fairings)
-Final_Hull_Solid_ID = geompy.addToStudy(Final_Hull_Solid, FINAL_OBJECT_NAME)
+Final_Lobes_Solid = geompy.MakeFuseList(lobes)
+
+Final_Airship_Solid = geompy.MakeFuseList(lobes + (fins if INCLUDE_FINS else []))
+Final_Airship_Solid = geompy.MakeCompound([Final_Airship_Solid] + fairings)
+Final_Airship_Solid_ID = geompy.addToStudy(Final_Airship_Solid, FINAL_OBJECT_NAME)
 
 if salome.sg.hasDesktop():
     gg = salome.ImportComponentGUI("GEOM")
-    gg.createAndDisplayGO(Final_Hull_Solid_ID)
-    gg.setDisplayMode(Final_Hull_Solid_ID, 1)
+    gg.createAndDisplayGO(Final_Airship_Solid_ID)
+    gg.setDisplayMode(Final_Airship_Solid_ID, 1)
     salome.sg.updateObjBrowser()
 
-print(f'[LOG] Attempting to export to "{OUTPUT_FILE}"...')
+OUTPUT_FILE_COMPLETE = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}.{OUTPUT_FORMAT.lower()}")
+OUTPUT_FILE_LOBES = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}_lobes.{OUTPUT_FORMAT.lower()}")
+
+print(f'[LOG] Attempting to export...')
 
 if OUTPUT_FORMAT == 'STL':
     # The deflection used for STL generation is a default one because we can later work with it using MeshLab.
-    geompy.ExportSTL(Final_Hull_Solid, OUTPUT_FILE, False)
+    geompy.ExportSTL(Final_Airship_Solid, OUTPUT_FILE_COMPLETE, False)
+    geompy.ExportSTL(Final_Lobes_Solid, OUTPUT_FILE_LOBES, False)
 elif OUTPUT_FORMAT == 'BREP':
-    geompy.ExportBREP(Final_Hull_Solid, OUTPUT_FILE)
+    geompy.ExportBREP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
+    geompy.ExportBREP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
 elif OUTPUT_FORMAT == 'STEP':
-    geompy.ExportSTEP(Final_Hull_Solid, OUTPUT_FILE)
+    geompy.ExportSTEP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
+    geompy.ExportSTEP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
 
 print(f'[LOG] Exported {OUTPUT_FORMAT} successfully. Waiting for user to exit (MainLoop)...')

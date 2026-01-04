@@ -390,23 +390,11 @@ class AirshipGUI(QMainWindow):
         if p is None: return
         self._update_property_display(p)
         fmt_idx = self.format_button_group.checkedId()
-        fmt_ext = [".brep", ".stl", ".step"][fmt_idx]; fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
-        export_path = os.path.join(target_dir, p["FINAL_OBJECT_NAME"] + fmt_ext)
+        fmt_name = ["BREP", "STL", "STEP"][fmt_idx]
+
         try:
             g = AirshipGeometry(p, self.salome_path)
-            original_generate = g._generate_salome_script
-            def patched_generate(export_file, export_format, open_gui):
-                path = original_generate(export_path, export_format, open_gui)
-                with open(path, 'r') as f: content = f.read()
-                if export_format == "STL":
-                    stl_export_logic = (f"\n# --- User STL Export ---\nimport GEOM\n"
-                                        f"geompy.ExportSTL(Final_Hull_Solid, r'{export_path}', False)\n"
-                                        f"print('Exported STL successfully.')\n")
-                    content += stl_export_logic
-                with open(path, 'w') as f: f.write(content)
-                return path
-            g._generate_salome_script = patched_generate
-            g.run_salome(False, p["FINAL_OBJECT_NAME"] + fmt_ext, fmt_name)
+            g.run_salome(fmt_name)
             self.btn_plot.setEnabled(True)
             self.log.append(f"Geometry saved in: {target_dir}")
         except Exception as e: self.log.append(f"Error: {e}")

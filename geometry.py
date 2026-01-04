@@ -4,6 +4,8 @@ import math
 import numpy as np
 
 from geometry_handler import GertlerEnvelope
+from meshlab_handler import apply_filters, get_meshdata
+from added_mass import compute_added_mass
 
 try:
     import matplotlib.pyplot as plt
@@ -22,19 +24,18 @@ class AirshipGeometry:
     def __init__(self, params, salome_path):
         self.params = params
         self.salome_path = salome_path
-        self.output_directory = params["OUTPUT_DIRECTORY"]
+        self.output_directory = os.path.normpath(params["OUTPUT_DIRECTORY"])
         self.L = params["ENVELOPE_LENGTH"]
         self.l2d = params["l2d"]
         self.D_MAX = self.L / self.l2d
         self.R_MAX = self.D_MAX / 2.0
+
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
 
-    def _generate_salome_script(self, export_file, export_format, open_gui):
-        script_filename = os.path.splitext(export_file)[0] + "_salome_script.py"
+    def _generate_salome_script(self, export_format):
+        script_filename = self.params["FINAL_OBJECT_NAME"] + "_salome_script.py"
         script_path = os.path.join(self.output_directory, script_filename)
-
-        safe_output_dir_host = os.path.normpath(self.output_directory)
 
         script_content = ["# INPUT PARAMETERS START"]
 
@@ -44,21 +45,11 @@ class AirshipGeometry:
         self.params.setdefault("ENVELOPE_TRUNCATION_RATIO", 0)
         self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params["ENVELOPE_PARAMS"])
         self.params.setdefault("CENTRAL_LOBE_LENGTH", self.params["ENVELOPE_LENGTH"])
-
-        # Ensure INCLUDE_FINS is passed to the script
-        if "INCLUDE_FINS" not in self.params:
-            self.params["INCLUDE_FINS"] = True
-
-        if "MULTI_LOBE_OFFSET_FACTOR" in self.params:
-            del self.params["MULTI_LOBE_OFFSET_FACTOR"]
+        self.params.setdefault("INCLUDE_FINS", True)
 
         for key, value in self.params.items():
             if isinstance(value, str):
-                if key in ["OUTPUT_DIRECTORY", "FINAL_OBJECT_NAME"]:
-                    safe_value = value.replace(os.path.sep, '/')
-                    script_content.append(f"{key} = r'{safe_value}'")
-                else:
-                    script_content.append(f"{key} = '{value}'")
+                script_content.append(f"{key} = r'{value}'")
             elif isinstance(value, float):
                 script_content.append(f"{key} = {int(value) if value.is_integer() else value}")
             elif isinstance(value, bool):
@@ -68,7 +59,6 @@ class AirshipGeometry:
 
         script_content.append(f"DIRECTORY_PATH = r'{DIR_PATH}'")
         script_content.append(f"OUTPUT_FORMAT = r'{export_format}'")
-        script_content.append(f"OUTPUT_FILE = r'{os.path.abspath(os.path.join(safe_output_dir_host, export_file)).replace(os.path.sep, '/')}'")
 
         script_content.append("# INPUT PARAMETERS END\n")
         script_content.append(BASE_SCRIPT)
@@ -78,17 +68,17 @@ class AirshipGeometry:
 
         return script_path
 
-    def run_salome(self, open_gui, export_file, export_format):
-        script_path = self._generate_salome_script(export_file, export_format, open_gui)
-        salome_launcher = os.path.normpath(self.salome_path)
+    def run_salome(self, export_format, open_gui=False):
+        script_path = self._generate_salome_script(export_format)
+        salome_launcher_path = os.path.normpath(self.salome_path)
 
-        if not os.path.exists(salome_launcher):
-            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher}. Please check the path configured in airship_gui.py.")
+        if not os.path.exists(salome_launcher_path):
+            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher_path}. Please check the path configured in airship_gui.py.")
 
         mode_flag = "-g" if open_gui else "-t"
         script_path_safe = os.path.normpath(script_path).replace(os.path.sep, '/')
 
-        salome_command = f'"{salome_launcher}" {mode_flag} python {script_path_safe}'
+        salome_command = f'"{salome_launcher_path}" {mode_flag} python {script_path_safe}'
         command_str = f'cmd /C "{salome_command}"'
 
         print("---")
@@ -113,10 +103,35 @@ class AirshipGeometry:
                 print(process.stdout)
                 print("----------------------------\n")
 
+            final_obj_name = self.params["FINAL_OBJECT_NAME"]
+            output_file_complete = os.path.join(self.output_directory, f"{final_obj_name}.{export_format.lower()}")
+            output_file_lobes = os.path.join(self.output_directory, f"{final_obj_name}_lobes.{export_format.lower()}")
+            filters = {}
+
+            if "MESH_TARGET_FACES" in self.params:
+                filters["targetfacenum"] = self.params["MESH_TARGET_FACES"]
+
+            if "MESH_TARGET_SIZE" in self.params:
+                filters["targetperc"] = self.params["MESH_TARGET_SIZE"]
+
+            # The final geometry file is sent for mesh processing.
+            if os.path.exists(output_file_complete):
+                apply_filters(output_file_complete, **filters)
+            else:
+                print("Output file for complete airship not found.")
+
+            # The geometry file created just for the lobes is used to computed added mass.
+            if os.path.exists(output_file_lobes):
+                meshdata = get_meshdata(output_file_lobes, **filters)
+                added_mass = compute_added_mass(*meshdata)
+                print(added_mass)
+            else:
+                print("Output file for lobes export not found.")
+
             return process
 
         except FileNotFoundError:
-            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher}. Check path in airship_gui.py.")
+            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher_path}. Check path in airship_gui.py.")
         except Exception as e:
             raise RuntimeError(f"Salome execution failed unexpectedly. Error: {e}")
     
