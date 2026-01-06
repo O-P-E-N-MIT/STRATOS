@@ -54,3 +54,11 @@ def get_meshdata_from_meshset (ms):
 def get_meshdata (filename, **kwargs):
     mesh = apply_filters(filename, **kwargs)
     return get_meshdata_from_meshset(mesh)
+
+# Creates a STL mesh and saves it in a file.
+def save_mesh (filename, vertices, faces):
+    mesh = pymeshlab.Mesh(vertex_matrix=vertices, face_matrix=faces)
+
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(mesh, mesh_name="my_mesh")
+    ms.save_current_mesh(filename)
