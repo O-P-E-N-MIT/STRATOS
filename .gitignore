@@ -1,7 +1,7 @@
 __pycache__/
 archive/
 test/
-exec_salome_temp.py
+unstable/
 
 *.png
 *.brep

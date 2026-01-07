@@ -54,7 +54,7 @@ def create_balloon_geometry (
         z_mer *= scale
 
     # Formation of the gores.
-    phi = np.linspace(-(np.pi)/gores, (np.pi)/gores, phi_resolution) if single_gore else np.linspace(0, 2*np.pi/gores, phi_resolution)
+    phi = np.linspace(-(np.pi)/gores, (np.pi)/gores, phi_resolution) if single_gore else np.linspace(0, 2*np.pi, phi_resolution)
     TH, PH = np.meshgrid(theta, phi)
 
     r0 = np.interp(TH, theta, r_mer)
