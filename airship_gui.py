@@ -343,7 +343,7 @@ class AirshipGUI(QMainWindow):
         self.tab_widget.addTab(self.primary_input_tab, "Envelope Geometry")
         if is_multi: self.tab_widget.addTab(self.fairings_tab, "Multi-Lobe Configuration")
         if not is_balloon: self.tab_widget.addTab(self.fin_tab, "Fin Design")
-        self.tab_widget.addTab(self.output_tab, "Output & Preview")
+        self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1))
         self.tab_widget.blockSignals(False)
         self._update_navigation_buttons()
@@ -488,35 +488,29 @@ class AirshipGUI(QMainWindow):
         self.log.setMaximumHeight(200)
         left_layout.addWidget(self.log)
 
-        # --- RIGHT PANEL (Added Mass Table above 3D Preview) ---
+        # --- RIGHT PANEL ---
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
 
-        # Compact Added Mass Matrix Display using a Table
         matrix_group = QGroupBox("Added Mass Matrix")
         matrix_vbox = QVBoxLayout(matrix_group)
-
         self.matrix_table = QTableWidget(6, 6)
         self.matrix_table.setHorizontalHeaderLabels(["u", "v", "w", "p", "q", "r"])
         self.matrix_table.setVerticalHeaderLabels(["X", "Y", "Z", "K", "M", "N"])
         self.matrix_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.matrix_table.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.matrix_table.setFixedHeight(180) # Adjust height to fit matrix
+        self.matrix_table.setFixedHeight(180)
         self.matrix_table.setEditTriggers(QTableWidget.NoEditTriggers)
         matrix_vbox.addWidget(self.matrix_table)
         right_layout.addWidget(matrix_group)
 
-        # 3D Preview (Geometry Visualizer)
         preview_group = QGroupBox("3D Model Preview")
         preview_vbox = QVBoxLayout(preview_group)
-
-        # PyVista Plotter Integration
         self.plotter = BackgroundPlotter(show=False)
         self.plotter.set_background("#1e1e1e")
         preview_vbox.addWidget(self.plotter.interactor)
         right_layout.addWidget(preview_group)
 
-        # Assemble the splitter
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
         self.splitter.setStretchFactor(0, 1)
@@ -524,6 +518,43 @@ class AirshipGUI(QMainWindow):
 
         main_tab_layout = QVBoxLayout(self.output_tab)
         main_tab_layout.addWidget(self.splitter)
+
+        # --- NEW: SIGNAL CONNECTIONS FOR LIVE UPDATES ---
+        # Connect geometry-impacting sliders to the update function
+        geo_keys = ["l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME"]
+        for key in geo_keys:
+            if key in self.inputs:
+                self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
+
+        # Connect the preset dropdown
+        self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
+
+    def _auto_update_props(self):
+        """Internal trigger to refresh properties based on current slider states."""
+        # Skip for balloon mode if your AirshipGeometry logic doesn't support it
+        if self.mode_button_group.checkedId() == 3:
+            return
+
+        params = self.get_parameters(self.current_session_folder)
+        if params:
+            self._update_property_display(params)
+
+    def _update_property_display(self, params):
+        """Calculates and updates theoretical properties in the GUI labels."""
+        try:
+            # Note: Ensure AirshipGeometry.geometric_properties() is a fast
+            # mathematical calculation and doesn't launch Salome externally.
+            geom = AirshipGeometry(params, self.salome_path)
+            vol, surf, top, side = geom.geometric_properties()
+
+            self.prop_outputs["vol"].setText(f"{vol:.4f}")
+            self.prop_outputs["surf"].setText(f"{surf:.4f}")
+            self.prop_outputs["top_area"].setText(f"{top:.4f}")
+            self.prop_outputs["side_area"].setText(f"{side:.4f}")
+
+        except Exception as e:
+            # Silently fail or log to status if the geometry isn't ready yet
+            pass
 
     def _update_3d_view(self, stl_path):
         """Refreshes the 3D model in the plotter interactor."""
