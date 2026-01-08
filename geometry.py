@@ -17,6 +17,7 @@ except ImportError:
 DIR_PATH = os.path.dirname(os.path.abspath(__file__))
 BASE_SCRIPT_FILE = "salome_script.py"
 BREAKER = "# INPUT PARAMETERS END"
+# Load the base Salome script template
 BASE_SCRIPT = open(os.path.join(DIR_PATH, BASE_SCRIPT_FILE), 'r').read().split(BREAKER, 1)[1]
 
 class AirshipGeometry:
@@ -34,13 +35,22 @@ class AirshipGeometry:
             os.makedirs(self.output_directory)
 
     def _generate_salome_script(self, export_format):
+        """Generates a temporary Salome script with injected user parameters."""
         script_filename = self.params["FINAL_OBJECT_NAME"] + "_salome_script.py"
         script_path = os.path.join(self.output_directory, script_filename)
 
         script_content = ["# INPUT PARAMETERS START"]
 
         if "VOLUME" in self.params:
-            self.params["ENVELOPE_LENGTH"] = GertlerEnvelope.from_parameters_volume(self.params["ENVELOPE_PARAMS"], self.params["VOLUME"], self.params["ENVELOPE_RESOLUTION"], self.params["LOBE_NUMBER"], self.params["LOBE_OFFSET_X"], self.params["LOBE_OFFSET_Y"], self.params["LOBE_OFFSET_Z"]).length
+            self.params["ENVELOPE_LENGTH"] = GertlerEnvelope.from_parameters_volume(
+                self.params["ENVELOPE_PARAMS"],
+                self.params["VOLUME"],
+                self.params["ENVELOPE_RESOLUTION"],
+                self.params["LOBE_NUMBER"],
+                self.params["LOBE_OFFSET_X"],
+                self.params["LOBE_OFFSET_Y"],
+                self.params["LOBE_OFFSET_Z"]
+            ).length
 
         self.params.setdefault("ENVELOPE_TRUNCATION_RATIO", 0)
         self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params["ENVELOPE_PARAMS"])
@@ -69,11 +79,12 @@ class AirshipGeometry:
         return script_path
 
     def run_salome(self, export_format, open_gui=False):
+        """Executes the Salome script and processes the resulting mesh."""
         script_path = self._generate_salome_script(export_format)
         salome_launcher_path = os.path.normpath(self.salome_path)
 
         if not os.path.exists(salome_launcher_path):
-            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher_path}. Please check the path configured in airship_gui.py.")
+            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher_path}.")
 
         mode_flag = "-g" if open_gui else "-t"
         script_path_safe = os.path.normpath(script_path).replace(os.path.sep, '/')
@@ -81,9 +92,10 @@ class AirshipGeometry:
         salome_command = f'"{salome_launcher_path}" {mode_flag} python {script_path_safe}'
         command_str = f'cmd /C "{salome_command}"'
 
-        print("---")
+        print("[STATUS] Launching Salome subprocess...")
 
         try:
+            # Execute Salome and capture output for the GUI stream redirector
             process = subprocess.run(
                 command_str,
                 capture_output=True,
@@ -93,53 +105,50 @@ class AirshipGeometry:
                 shell=True
             )
 
-            if process.stderr:
-                print("\n!!! ERROR CAPTURED BY PYTHON PROCESS !!!")
-                print(process.stderr)
-                print("!!! END ERROR MESSAGE !!!\n")
-
+            # Print stdout/stderr so the StatusLogger can catch them
             if process.stdout:
-                print("\n--- Console Output (STDOUT) ---")
                 print(process.stdout)
-                print("----------------------------\n")
+            if process.stderr:
+                print(f"[SALOME ERROR] {process.stderr}")
 
             final_obj_name = self.params["FINAL_OBJECT_NAME"]
             output_file_complete = os.path.join(self.output_directory, f"{final_obj_name}.{export_format.lower()}")
             output_file_lobes = os.path.join(self.output_directory, f"{final_obj_name}_lobes.{export_format.lower()}")
+
+            # Setup MeshLab decimation filters
             filters = {}
-
             if "MESH_TARGET_FACES" in self.params:
-                filters["targetfacenum"] = self.params["MESH_TARGET_FACES"]
+                filters["targetfacenum"] = int(self.params["MESH_TARGET_FACES"])
+            else:
+                # Default to 1500 faces to ensure calculation speed while maintaining accuracy
+                filters["targetfacenum"] = 1500
 
-            if "MESH_TARGET_SIZE" in self.params:
-                filters["targetperc"] = self.params["MESH_TARGET_SIZE"]
-
-            # The final geometry file is sent for mesh processing.
+                # Process the full airship mesh for visual export
             if os.path.exists(output_file_complete):
+                print(f"[STATUS] Applying MeshLab filters to {output_file_complete}...")
                 apply_filters(output_file_complete, **filters)
-            else:
-                print("Output file for complete airship not found.")
 
-            # The geometry file created just for the lobes is used to computed added mass.
+            # --- Added Mass Calculation ---
+            added_mass_matrix = None
             if os.path.exists(output_file_lobes):
+                print("[STATUS] Loading lobe mesh for Added Mass calculation...")
                 meshdata = get_meshdata(output_file_lobes, **filters)
-                added_mass = compute_added_mass(*meshdata)
-                print(added_mass)
+                print("[STATUS] Computing Added Mass Matrix (Vectorized)...")
+                # compute_added_mass is now the vectorized, high-speed version
+                added_mass_matrix = compute_added_mass(*meshdata)
             else:
-                print("Output file for lobes export not found.")
+                print("[WARNING] Output file for lobes export not found.")
 
-            return process
+            # Return both for the GUI to display
+            return process, added_mass_matrix
 
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Salome launcher not found at: {salome_launcher_path}. Check path in airship_gui.py.")
         except Exception as e:
-            raise RuntimeError(f"Salome execution failed unexpectedly. Error: {e}")
-    
-    # Returns the geometric properties of a selected lobe.
-    # (volume, surface area, top projected area, side projected area)
+            raise RuntimeError(f"Salome execution failed: {e}")
+
     def geometric_properties (self):
+        """Calculates theoretical geometric values for property display."""
         envelope = GertlerEnvelope.from_parameters(self.params["ENVELOPE_PARAMS"], self.params["ENVELOPE_LENGTH"], self.params["ENVELOPE_RESOLUTION"])
-        
+
         lobe_number = self.params["LOBE_NUMBER"]
         e = self.params["LOBE_OFFSET_X"]
         f = self.params["LOBE_OFFSET_Y"]
@@ -152,28 +161,23 @@ class AirshipGeometry:
         else:
             return envelope.volume_trilobe(e, f, g), envelope.surface_area_trilobe(e, f, g), envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g)
 
-# A function to plot and save petal coordinates.
 def plot_and_save_profile (params, length, nx, num_petals, nc, filename, shape_name="Airship_Geometry"):
+    """Generates the DAT file and profile plot for the developed gore/petal."""
     coords_2D = GertlerEnvelope.from_parameters(params, length, nx).petal_coordinates(num_petals, nc)
 
     try:
         with open(filename, 'w') as f:
             f.write(f"# 2D Developed Petal Coordinates\n")
-            f.write(f"# X-Points: {nx}, C-Points: {nc}\n")
             f.write(f"# X_coordinate   C_coordinate\n")
-
             for x, c in coords_2D:
                 f.write(f"{x:.6f}\t{c:.6f}\n")
-
-        dat_result = f"Coordinates successfully saved to DAT file:\n{filename}"
-
+        dat_result = f"Coordinates saved to DAT file."
     except Exception as e:
-        dat_result = f"Error generating DAT file:\n{e}"
-    
-    plot_result = ""
+        dat_result = f"Error saving DAT: {e}"
 
+    plot_result = ""
     if plt is None:
-        plot_result = "\nMatplotlib not available. Cannot generate 2D plot."
+        plot_result = "Matplotlib not found."
     else:
         try:
             X_flat = [c[0] for c in coords_2D]
@@ -184,37 +188,16 @@ def plot_and_save_profile (params, length, nx, num_petals, nc, filename, shape_n
             png_filename = os.path.splitext(filename)[0] + "_petal.png"
 
             plt.figure(figsize=(10, 8))
-
-            plt.plot(X_grid[:, 0], C_grid[:, 0], 'r-', label='Longitudinal Edge (Boundary)', linewidth=2)
+            plt.plot(X_grid[:, 0], C_grid[:, 0], 'r-', label='Longitudinal Edge', linewidth=2)
             plt.plot(X_grid[:, -1], C_grid[:, -1], 'r-', linewidth=2)
-
             plt.plot(X_grid[:, nc // 2], C_grid[:, nc // 2], 'k--', label='Petal Centerline', linewidth=1)
-
-            plt.plot(X_grid[0, :], C_grid[0, :], 'b-', label='Axial Boundary', linewidth=2)
-            plt.plot(X_grid[nx-1, :], C_grid[nx-1, :], 'b-', linewidth=2)
-
-            plt.title(f'2D Developed Petal: {shape_name} ({num_petals} Petals)', fontsize=16)
-            plt.xlabel('Axial Position (X) [units]', fontsize=12)
-            plt.ylabel('Circumferential Distance (C) [units]', fontsize=12)
+            plt.title(f'2D Developed Petal: {shape_name}', fontsize=16)
             plt.grid(True, linestyle=':', alpha=0.6)
-
-            handles, labels = plt.gca().get_legend_handles_labels()
-            unique_labels = []
-            unique_handles = []
-            for h, l in zip(handles, labels):
-                if l not in unique_labels:
-                    unique_labels.append(l)
-                    unique_handles.append(h)
-            plt.legend(unique_handles, unique_labels)
-
             plt.axis('equal')
-
             plt.savefig(png_filename, dpi=300, bbox_inches='tight')
             plt.close()
-
-            plot_result = f"Plot successfully saved to:\n{png_filename}"
-
+            plot_result = f"Plot saved as PNG."
         except Exception as e:
-            plot_result = f"Error generating plot:\n{e}"
+            plot_result = f"Error generating plot: {e}"
 
-    return f"{dat_result}\n\n{plot_result}"
+    return f"{dat_result}\n{plot_result}"
