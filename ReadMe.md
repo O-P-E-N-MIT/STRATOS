@@ -1,4 +1,4 @@
-## Framework for Airship Geometry Generator
+## STRATOS: Software-based Tool for Rapid Airship Translation & Optimized Shaping
 <a name="top"></a>
 
 [![OS](https://img.shields.io/badge/OS-linux%2C%20windows%2C%20macOS-0078D4)]()
@@ -69,7 +69,7 @@ python3 airship_gui.py
 ### Cite As
 
 ```bash
-Anantha Hari Arun Pedapudi, Sudarsan D. Naidu, and Manikandan Murugaiah "XXXXXX: Framework for Airship Geometry Generator", https://github.com/O-P-E-N-MIT/Airship-Geometric-Modelling
+Anantha Hari Arun Pedapudi, Sudarsan D. Naidu, and Manikandan Murugaiah "STRATOS: Software-based Tool for Rapid Airship Translation & Optimized Shaping", https://github.com/O-P-E-N-MIT/Airship-Geometric-Modelling
 ```
 ### References
 1. Manikandan, M., Shah, R. R., Priyan, P., Singh, B., & Pant, R. S. (2023). A parametric design approach for multi-lobed hybrid airships. The Aeronautical Journal, 128(1319), 1–36. https://doi.org/10.1017/aer.2023.37
