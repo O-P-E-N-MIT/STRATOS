@@ -3,7 +3,7 @@ import numpy as np
 def compute_added_mass (vertices, faces, normals):
     # 3. Build X, Y, Z matrices
     
-    print("Building X Y Z matrices.")
+    print("[MATH] Building X Y Z matrices...")
 
     n = faces.shape[0]
     
@@ -17,17 +17,13 @@ def compute_added_mass (vertices, faces, normals):
         Y[:, i] = vertices[A, 1]
         Z[:, i] = vertices[A, 2]
     
-    # 4. Centroids of each face
-    
-    print("Computing centroids of each face.")
+    print("[MATH] Computing centroids of each face...")
     
     p = np.mean(X, axis=0)
     q = np.mean(Y, axis=0)
     r = np.mean(Z, axis=0)
     
-    # 5. Distance and influence matrices
-    
-    print("Computing distance and influence matrices.")
+    print("[MATH] Computing distance and influence matrices...")
     
     dist = np.zeros((n, n))
     cc = np.zeros((n, n))
@@ -41,9 +37,7 @@ def compute_added_mass (vertices, faces, normals):
                 cc[i, j] = np.dot(dvec, normals[j])
                 ccc[i, j] = cc[i, j] / (dist[i, j]**3)
     
-    # 6. B, C matrices and surface area
-    
-    print("Computing B, C matrices and surface area.")
+    print("[MATH] Computing B, C matrices and surface area...")
     
     B = np.zeros((n, n))
     C = np.zeros((n, n))
@@ -54,8 +48,6 @@ def compute_added_mass (vertices, faces, normals):
         V2 = np.array([X[1, i], Y[1, i], Z[1, i]])
         V3 = np.array([X[2, i], Y[2, i], Z[2, i]])
     
-        # print(V1, V2, V3)
-    
         S = np.cross(V2 - V1, V3 - V1) / 2
         SS[i, 0] = np.linalg.norm(S)
     
@@ -64,16 +56,12 @@ def compute_added_mass (vertices, faces, normals):
                 B[j, i] = SS[i, 0] / dist[j, i]
                 C[j, i] = SS[i, 0] * ccc[j, i]
     
-    # 7. Delta matrix and final C matrix
-    
-    print("Computing delta matrix and final C matrix.")
+    print("[MATH] Computing delta matrix and final C matrix...")
     
     delt = np.eye(n)
     Cfinal = (2 * np.pi * delt) - C
     
-    # 8. Volume and centroid
-    
-    print("Computing volume and centroid.")
+    print("[MATH] Computing volume and centroid...")
     
     vol = np.zeros(n)
     volsx = np.zeros(n)
@@ -92,9 +80,7 @@ def compute_added_mass (vertices, faces, normals):
     ycv = np.sum(volsy) / voltotal
     zcv = np.sum(volsz) / voltotal
     
-    # 9. Boundary functions
-    
-    print("Computing boundary functions.")
+    print("[MATH] Computing boundary functions.")
     
     xcg = p - xcv
     ycg = q - ycv
@@ -110,9 +96,7 @@ def compute_added_mass (vertices, faces, normals):
     boundfive = alphaa * zcg - gammaa * xcg
     boundsix  = betaa * xcg - alphaa * ycg
     
-    # 10. Potential calculations
-    
-    print("Calculating potentials.")
+    print("[MATH] Solving linear systems for velocity potentials...")
     
     phi = [
         np.linalg.solve(Cfinal, B @ alphaa),
@@ -125,16 +109,15 @@ def compute_added_mass (vertices, faces, normals):
     
     boundary = [alphaa, betaa, gammaa, boundfour, boundfive, boundsix]
     
-    # 11. Added Mass Matrix
-    
-    print("Computed Added Mass matrix.")
+    print("[MATH] Computing added mass matrix...")
     
     M = np.zeros((6, 6))
-    
     for i in range(6):
         for j in range(6):
             M[i, j] = np.sum(phi[i] * boundary[j] * SS[:, 0])
     
     AM_final = np.round(M / voltotal, 2)
+
+    print("[MATH] Computed added mass matrix.")
     
     return AM_final
