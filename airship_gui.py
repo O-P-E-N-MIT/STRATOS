@@ -78,11 +78,14 @@ class GenerationWorker(QObject):
                 print(f"[PROCESS] Launching Salome subprocess for STL export...")
                 g = AirshipGeometry(self.params, self.params['SALOME_PATH'])
 
-                # If mass computation is disabled, we pass a flag to the geometry handler
-                # to only perform the STL export and skip the matrix derivation.
-                mode = "STL" if not self.compute_added_mass else "FULL"
+                # REFINED LOGIC: Pass "STL" string to completely bypass added mass blocks in the geometry scripts
+                if not self.compute_added_mass:
+                    process, matrix = g.run_salome("STL")
+                    matrix = None
+                else:
+                    print("[PROCESS] Computing Added Mass Matrix...")
+                    process, matrix = g.run_salome("FULL")
 
-                process, matrix = g.run_salome(mode)
                 print(f"[SUCCESS] Airship STL generated at: {output_path}")
                 self.finished.emit((matrix, output_path))
 
@@ -450,7 +453,7 @@ class AirshipGUI(QMainWindow):
         self.inputs["N_PETALS"] = LabeledSlider("Gores/Petals", 2, 200, 8, 1, 0)
         left_layout.addWidget(self.inputs["N_PETALS"])
 
-        # NEW CHECKBOX: Added Mass calculation toggle
+        # CHECKBOX: Added Mass calculation toggle
         self.inputs["COMPUTE_ADDED_MASS"] = QCheckBox("COMPUTE ADDED MASS (May slow down process)")
         self.inputs["COMPUTE_ADDED_MASS"].setChecked(True)
         self.inputs["COMPUTE_ADDED_MASS"].setFont(QFont("Arial", 9, QFont.Bold))
@@ -530,7 +533,7 @@ class AirshipGUI(QMainWindow):
         main_tab_layout = QVBoxLayout(self.output_tab)
         main_tab_layout.addWidget(self.splitter)
 
-        # --- NEW: SIGNAL CONNECTIONS FOR LIVE UPDATES ---
+        # --- SIGNAL CONNECTIONS FOR LIVE UPDATES ---
         geo_keys = ["l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME"]
         for key in geo_keys:
             if key in self.inputs:
@@ -711,11 +714,10 @@ class AirshipGUI(QMainWindow):
         self.btn_run.setEnabled(True)
         self.btn_run.setText("RUN GENERATION")
 
-        # Immediate 3D Render (Crucial: Generate 3D preview regardless of added mass)
+        # Immediate 3D Render
         self._update_3d_view(stl_path)
 
         if matrix is not None:
-            # Populate the Added Mass Table
             for r in range(6):
                 for c in range(6):
                     item = QTableWidgetItem(f"{matrix[r, c]:.4f}")
@@ -724,7 +726,8 @@ class AirshipGUI(QMainWindow):
             self.log.append("[SUCCESS] Added Mass calculation complete.")
         else:
             self.matrix_table.clearContents()
-            self.log.append("[INFO] Added Mass calculation skipped by user.")
+            self.matrix_table.setHorizontalHeaderLabels(["u", "v", "w", "p", "q", "r"])
+            self.matrix_table.setVerticalHeaderLabels(["X", "Y", "Z", "K", "M", "N"])
 
         self.log.append("[GUI] Process successfully completed.")
 
@@ -809,4 +812,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = AirshipGUI()
     ex.show()
-    sys.exit(app.exec())    
+    sys.exit(app.exec())
