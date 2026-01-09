@@ -47,12 +47,13 @@ class GenerationWorker(QObject):
     finished = Signal(object)
     error = Signal(str)
 
-    def __init__(self, mode_id, params, volume_val, gore_model):
+    def __init__(self, mode_id, params, volume_val, gore_model, compute_added_mass=True):
         super().__init__()
         self.mode_id = mode_id
         self.params = params
         self.volume_val = volume_val
         self.gore_model = gore_model
+        self.compute_added_mass = compute_added_mass
 
     def run(self):
         try:
@@ -76,8 +77,12 @@ class GenerationWorker(QObject):
             else: # AIRSHIP MODES
                 print(f"[PROCESS] Launching Salome subprocess for STL export...")
                 g = AirshipGeometry(self.params, self.params['SALOME_PATH'])
-                # Force STL generation for the 3D previewer
-                process, matrix = g.run_salome("STL")
+
+                # If mass computation is disabled, we pass a flag to the geometry handler
+                # to only perform the STL export and skip the matrix derivation.
+                mode = "STL" if not self.compute_added_mass else "FULL"
+
+                process, matrix = g.run_salome(mode)
                 print(f"[SUCCESS] Airship STL generated at: {output_path}")
                 self.finished.emit((matrix, output_path))
 
@@ -445,6 +450,12 @@ class AirshipGUI(QMainWindow):
         self.inputs["N_PETALS"] = LabeledSlider("Gores/Petals", 2, 200, 8, 1, 0)
         left_layout.addWidget(self.inputs["N_PETALS"])
 
+        # NEW CHECKBOX: Added Mass calculation toggle
+        self.inputs["COMPUTE_ADDED_MASS"] = QCheckBox("COMPUTE ADDED MASS (May slow down process)")
+        self.inputs["COMPUTE_ADDED_MASS"].setChecked(True)
+        self.inputs["COMPUTE_ADDED_MASS"].setFont(QFont("Arial", 9, QFont.Bold))
+        left_layout.addWidget(self.inputs["COMPUTE_ADDED_MASS"])
+
         self.format_button_group = QButtonGroup(self)
         h_lay = QHBoxLayout()
         for i, fmt in enumerate([".brep", ".stl", ".step"]):
@@ -520,7 +531,6 @@ class AirshipGUI(QMainWindow):
         main_tab_layout.addWidget(self.splitter)
 
         # --- NEW: SIGNAL CONNECTIONS FOR LIVE UPDATES ---
-        # Connect geometry-impacting sliders to the update function
         geo_keys = ["l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME"]
         for key in geo_keys:
             if key in self.inputs:
@@ -542,8 +552,6 @@ class AirshipGUI(QMainWindow):
     def _update_property_display(self, params):
         """Calculates and updates theoretical properties in the GUI labels."""
         try:
-            # Note: Ensure AirshipGeometry.geometric_properties() is a fast
-            # mathematical calculation and doesn't launch Salome externally.
             geom = AirshipGeometry(params, self.salome_path)
             vol, surf, top, side = geom.geometric_properties()
 
@@ -553,7 +561,6 @@ class AirshipGUI(QMainWindow):
             self.prop_outputs["side_area"].setText(f"{side:.4f}")
 
         except Exception as e:
-            # Silently fail or log to status if the geometry isn't ready yet
             pass
 
     def _update_3d_view(self, stl_path):
@@ -684,7 +691,8 @@ class AirshipGUI(QMainWindow):
             self.mode_button_group.checkedId(),
             p,
             self.inputs["VOLUME"].get_value(),
-            self.inputs["GORE_MODEL"].currentText()
+            self.inputs["GORE_MODEL"].currentText(),
+            compute_added_mass=self.inputs["COMPUTE_ADDED_MASS"].isChecked()
         )
         self.worker.moveToThread(self.thread)
 
@@ -703,7 +711,7 @@ class AirshipGUI(QMainWindow):
         self.btn_run.setEnabled(True)
         self.btn_run.setText("RUN GENERATION")
 
-        # Immediate 3D Render
+        # Immediate 3D Render (Crucial: Generate 3D preview regardless of added mass)
         self._update_3d_view(stl_path)
 
         if matrix is not None:
@@ -714,6 +722,9 @@ class AirshipGUI(QMainWindow):
                     item.setTextAlignment(Qt.AlignCenter)
                     self.matrix_table.setItem(r, c, item)
             self.log.append("[SUCCESS] Added Mass calculation complete.")
+        else:
+            self.matrix_table.clearContents()
+            self.log.append("[INFO] Added Mass calculation skipped by user.")
 
         self.log.append("[GUI] Process successfully completed.")
 
@@ -798,4 +809,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = AirshipGUI()
     ex.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec())    
