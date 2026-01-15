@@ -122,7 +122,7 @@ class AirshipGeometry:
             if "MESH_TARGET_FACES" in self.params:
                 filters["targetfacenum"] = int(self.params["MESH_TARGET_FACES"])
             else:
-                filters["targetfacenum"] = 1500
+                filters["targetfacenum"] = 50
 
             # --- Added Mass Calculation Logic ---
             added_mass_matrix = None
