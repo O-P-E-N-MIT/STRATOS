@@ -162,7 +162,7 @@ class AerostatHull:
         convergence = (sol.fun - target_lift) / max(target_lift, 1e-3) * 100
 
         return envelope, convergence
-    
+
     def get_properties (self, n=None):
         # If number of points to be taken for altitude is not given, it would be assumed to be taken for every 100m.
         if n is None:
@@ -171,35 +171,37 @@ class AerostatHull:
         h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
         L = np.zeros_like(h)
 
+        # FIX: Correctly extract offsets from the tuple defined in __init__
+        e, f, g = self.multi_lobe_distances
+
         if self.lobe_number == 1:
             volume = self.envelope.volume()
             surface_area = self.envelope.surface_area()
         elif self.lobe_number == 2:
-            volume = self.envelope.volume_bilobe(self.f)
-            surface_area = self.envelope.surface_area_trilobe(self.f)
+            volume = self.envelope.volume_bilobe(f)
+            surface_area = self.envelope.surface_area_bilobe(f)
         else:
-            volume = self.envelope.volume_trilobe(self.e, self.f, self.g)
-            surface_area = self.envelope.surface_area_trlobe(self.e, self.f, self.g)
+            volume = self.envelope.volume_trilobe(e, f, g)
+            surface_area = self.envelope.surface_area_trilobe(e, f, g)
 
         total_mass = self.skin_density * surface_area + self.additional_mass
 
         RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
         P, T = get_atmospheric_properties(h)
-        e = get_vapour_pressure(T, RH)
+        e_vap = get_vapour_pressure(T, RH)
 
         # Inflation fraction varying with altitude.
         I = self.inflation_fraction_factor * (T + self.delta_T) / (P + self.delta_P)
         I = np.clip(I, 0, 1)
 
         # Total ballonet volume varying with altitude.
-        # For per ballonet volume, divide it by the number assuming equal distribution.
         BV = (1 - I) * volume
 
         rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
         rho_ba = P/(287*T)
 
         # Gross static lift
-        Lg = K * volume * (P - (1-RDWV)*e) / T
+        Lg = K * volume * (P - (1-RDWV)*e_vap) / T
 
         # Net static lift
         Ln = Lg - (rho_lg * I * volume + rho_ba * BV + total_mass) * g
