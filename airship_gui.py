@@ -405,17 +405,45 @@ class AirshipGUI(QMainWindow):
         is_aero = (mode_id == 4)
         is_multi = self.lobe_button_group.checkedId() > 1 and not is_balloon
 
+        # Toggle Input group visibility
         self.hull_shape_box.setHidden(is_balloon)
         self.balloon_params_box.setHidden(not is_balloon)
         self.hull_config_group.setHidden(is_balloon)
         self.length_box.setHidden(not is_standard)
         self.volume_box.setHidden(not (is_vol or is_balloon))
 
-        if hasattr(self, 'matrix_group'):
-            self.matrix_group.setVisible(not is_aero)
-        if hasattr(self, 'aero_analysis_group'):
-            self.aero_analysis_group.setVisible(is_aero)
+        # Handle Output Tab UI rearrangement
+        if is_aero:
+            self.btn_run.setText("CALCULATE PERFORMANCE")
+            self.btn_run.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
+            self.btn_plot.hide()
+            self.btn_csv.show()
 
+            # Hide Added Mass and Export Format controls in Aerostatic mode
+            self.inputs["COMPUTE_ADDED_MASS"].hide()
+            # To hide the radio buttons, we hide the layout container they live in
+            for i in range(self.format_button_group.buttons().__len__()):
+                self.format_button_group.button(i).hide()
+
+            self.matrix_group.hide()
+            self.preview_group.hide()
+            self.aero_analysis_group.show()
+        else:
+            self.btn_run.setText("RUN GENERATION")
+            self.btn_run.setStyleSheet("background-color: #007ACC; color: white;")
+            self.btn_plot.show()
+            self.btn_csv.hide()
+
+            # Show Added Mass and Export Format controls in other modes
+            self.inputs["COMPUTE_ADDED_MASS"].show()
+            for i in range(self.format_button_group.buttons().__len__()):
+                self.format_button_group.button(i).show()
+
+            self.matrix_group.show()
+            self.preview_group.show()
+            self.aero_analysis_group.hide()
+
+        # Update available tabs
         curr = self.tab_widget.currentIndex()
         self.tab_widget.clear()
         self.tab_widget.addTab(self.primary_input_tab, "Envelope Geometry")
@@ -546,14 +574,21 @@ class AirshipGUI(QMainWindow):
         self.btn_run = QPushButton("RUN GENERATION")
         self.btn_run.setMinimumHeight(35)
         self.btn_run.setStyleSheet("background-color: #007ACC; color: white;")
-        self.btn_run.clicked.connect(self.run_process)
+        self.btn_run.clicked.connect(self.handle_output_action)
 
         self.btn_plot = QPushButton("PLOT 2D PETAL")
         self.btn_plot.setMinimumHeight(35)
         self.btn_plot.clicked.connect(self.generate_plot)
 
+        self.btn_csv = QPushButton("EXPORT CSV")
+        self.btn_csv.setMinimumHeight(35)
+        self.btn_csv.setStyleSheet("background-color: #555555; color: white;")
+        self.btn_csv.clicked.connect(self.export_csv_data)
+        self.btn_csv.hide()
+
         btn_lay.addWidget(self.btn_run)
         btn_lay.addWidget(self.btn_plot)
+        btn_lay.addWidget(self.btn_csv)
         left_layout.addLayout(btn_lay)
 
         prop_group = QGroupBox("Geometric Properties")
@@ -598,12 +633,12 @@ class AirshipGUI(QMainWindow):
         aero_vbox.addWidget(self.canvas)
         self.right_layout.addWidget(self.aero_analysis_group)
 
-        preview_group = QGroupBox("3D Model Preview")
-        preview_vbox = QVBoxLayout(preview_group)
+        self.preview_group = QGroupBox("3D Model Preview")
+        preview_vbox = QVBoxLayout(self.preview_group)
         self.plotter = BackgroundPlotter(show=False)
         self.plotter.set_background("#1e1e1e")
         preview_vbox.addWidget(self.plotter.interactor)
-        self.right_layout.addWidget(preview_group)
+        self.right_layout.addWidget(self.preview_group)
 
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
@@ -618,6 +653,58 @@ class AirshipGUI(QMainWindow):
             if key in self.inputs:
                 self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
         self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
+
+    def handle_output_action(self):
+        """Routes the button click based on mode; skips generation in Aero mode."""
+        if self.mode_button_group.checkedId() == 4:
+            self.run_instant_aerostatics()
+        else:
+            self.run_process()
+
+    def run_instant_aerostatics(self):
+        """Performs analytical performance calculations without Salome or added mass."""
+        self.log.append("[PROCESS] Running Analytical Aerostatic Solver (Bypassing Geometry Export)...")
+        try:
+            target_dir = self.current_session_folder
+            p = self.get_parameters(target_dir)
+
+            from aerostatics import AerostatHull
+            from geometry_handler import GertlerEnvelope
+
+            # 1. Create analytical geometry model
+            resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
+
+            # 2. Run buoyancy and performance engine
+            # Pass all 11+ positional/keyword arguments required by your class
+            ahull = AerostatHull(
+                envelope=resolved_env,
+                additional_mass=p.get("PAYLOAD_MASS", 220),
+                skin_density=p.get("SKIN_DENSITY", 0.75),
+                operational_height=p.get("OPERATIONAL_HEIGHT", 4500),
+                deployment_height=0,   # Position 5
+                margin_height=500,     # Position 6
+                RH=p.get("RELATIVE_HUMIDITY", 0.7),
+                purity=p.get("GAS_PURITY", 0.97),
+                delta_P=p.get("DELTA_P", 500),
+                delta_T=p.get("DELTA_T", 5),
+                gas_constant=p.get("GAS_CONSTANT", 2077),
+                lobe_number=p.get("LOBE_NUMBER", 1),
+                e=p.get("LOBE_OFFSET_X", 0),
+                f=p.get("LOBE_OFFSET_Y", 0),
+                g=p.get("LOBE_OFFSET_Z", 0)
+            )
+
+            # 3. Compute arrays for plotting (h, Ln, Lg, I, BV)
+            h, Ln, Lg, I, BV = ahull.get_properties(n=100)
+            self.last_aero_data = (h, Ln, Lg, I, BV)
+
+            # 4. Refresh Dashboard graphs
+            self.update_aero_plots(h, Ln, Lg, I, BV)
+
+            self.log.append(f"[SUCCESS] Calculation complete.")
+            self.log.append(f"[INFO] Final Hull Length: {p['ENVELOPE_LENGTH']:.3f} m")
+        except Exception as e:
+            self.log.append(f"[ERROR] Solver failed: {str(e)}")
 
     def _auto_update_props(self):
         """Refreshes geometric property labels based on current slider states."""
@@ -691,6 +778,26 @@ class AirshipGUI(QMainWindow):
         os.makedirs(new_folder)
         self.current_session_folder = new_folder
         return new_folder
+
+    def export_csv_data(self):
+        """Exports calculation results to a CSV file."""
+        if not hasattr(self, 'last_aero_data') or self.last_aero_data is None:
+            QMessageBox.warning(self, "No Data", "Run 'Calculate' first.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Export Performance Data", "", "CSV Files (*.csv)")
+        if path:
+            import csv
+            h, Ln, Lg, I, BV = self.last_aero_data
+            try:
+                with open(path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Alt (m)", "Net Lift (N)", "Gross Lift (N)", "Inflation (%)", "Ballonet (m3)"])
+                    for row in zip(h, Ln, Lg, I, BV):
+                        writer.writerow(row)
+                self.log.append(f"[SUCCESS] Exported to: {path}")
+            except Exception as e:
+                self.log.append(f"[ERROR] CSV Export failed: {e}")
 
     def get_parameters(self, target_dir):
         """
@@ -832,20 +939,24 @@ class AirshipGUI(QMainWindow):
         self.thread.start()
 
     def update_aero_plots(self, h, Ln, Lg, I, BV):
+        """Updates the performance graphs with native dark mode styling."""
         self.fig.clear()
-        colors = ['#00BFFF', '#00FF00', '#FF4500', '#DA70D6']
-        titles = ["Net Static Lift (Payload/N)", "Gross Static Lift (Buoyancy/N)", "Inflation Fraction (%)", "Ballonet Volume (m³)"]
+
+        titles = ["Net Static Lift (N)", "Gross Static Lift (N)", "Inflation Fraction (%)", "Ballonet Volume (m³)"]
         datasets = [Ln, Lg, I * 100, BV]
+        colors = ['#00BFFF', '#00FF00', '#FF4500', '#DA70D6']
+
         for i in range(4):
             ax = self.fig.add_subplot(2, 2, i + 1)
             ax.plot(h, datasets[i], color=colors[i], linewidth=1.5)
-            ax.set_title(titles[i], color='#00BFFF', fontsize=10)
+            ax.set_title(titles[i], color='#00BFFF', fontsize=10, fontweight='bold')
             ax.set_xlabel("Altitude (m)", color='white', fontsize=8)
             ax.tick_params(colors='white', labelsize=8)
-            ax.grid(True, alpha=0.2, linestyle='--')
+            ax.grid(True, alpha=0.1, linestyle='--')
             ax.set_facecolor('#1e1e1e')
             for spine in ax.spines.values():
                 spine.set_color('#3c3c3c')
+
         self.fig.tight_layout()
         self.canvas.draw()
 
