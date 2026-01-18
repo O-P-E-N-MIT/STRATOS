@@ -926,7 +926,7 @@ class AirshipGUI(QMainWindow):
 
                     # Find length required to achieve TARGET_NET_LIFT
                     target_lift = p.get("TARGET_NET_LIFT", 0)
-                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1000.0], target_lift=target_lift)
+                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1e10], target_lift=target_lift)
 
                     # Update parameter dictionary and UI slider with the result
                     p["ENVELOPE_LENGTH"] = resolved_env.length
