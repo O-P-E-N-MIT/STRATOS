@@ -754,6 +754,9 @@ class AirshipGUI(QMainWindow):
             # 2. Get performance arrays
             h, Ln, Lg, I, BV = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
 
+            # Index at which operational height is present.
+            operational_index = h.searchsorted(ahull.operational_altitude)
+
             # 3. Calculate Final Design Parameters for Logging
             # Geometry properties
             vol = ahull.envelope.volume()
@@ -767,12 +770,11 @@ class AirshipGUI(QMainWindow):
 
             # Gas mass at operational altitude
             # P and T at operational height (index -1 of the generated arrays)
-            P_op, T_op = h[-1], I[-1] # Note: I is the array of inflation fractions
-            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_op + p["DELTA_T"]))) * I[-1] * vol
+            P_op, T_op = h[operational_index], I[operational_index] # Note: I is the array of inflation fractions
+            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_op + p["DELTA_T"]))) * I[operational_index] * vol
 
             # Ballonet Radius (Simplified as sphere of equivalent volume)
-            # BV[-1] is ballonet volume at operational altitude
-            v_ballonet_total = BV[-1]
+            v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
             ballonet_radius = (3 * v_per_ballonet / (4 * 3.14159)) ** (1/3)
 
@@ -792,7 +794,7 @@ class AirshipGUI(QMainWindow):
             print(f"Lifting Gas Mass (Op):  {gas_mass_op:.4f} kg")
             print(f"Tether Mass @Op Alt:    {tether_mass_op:.4f} kg")
             print("-" * 30)
-            print(f"Op Inflation Fraction:  {I[-1]*100:.2f} %")
+            print(f"Op Inflation Fraction:  {I[operational_index]*100:.2f} %")
             print(f"Dep Inflation Fraction: {ahull.inflation_fraction_deploy*100:.2f} %")
             print("="*30 + "\n")
 
@@ -975,7 +977,7 @@ class AirshipGUI(QMainWindow):
 
                     # Find length required to achieve TARGET_NET_LIFT
                     target_lift = p.get("TARGET_NET_LIFT", 0)
-                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1000.0], target_lift=target_lift)
+                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1e10], target_lift=target_lift)
 
                     # Update parameter dictionary and UI slider with the result
                     p["ENVELOPE_LENGTH"] = resolved_env.length
