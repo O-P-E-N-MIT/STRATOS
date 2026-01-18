@@ -192,7 +192,8 @@ class AerostatHull:
         return envelope, sol.fun
 
     def get_properties (self, n=None):
-        # If number of points to be taken for altitude is not given, it would be assumed to be taken for every 100m.
+        # If number of points to be taken for altitude is not given,
+        # it would be assumed to be taken for every 100m.
         if n is None:
             n = int((self.pressure_altitude - self.deployment_altitude) / 100)
 
@@ -200,6 +201,11 @@ class AerostatHull:
 
         # FIX: Correctly extract offsets from the tuple defined in __init__
         e, f, g = self.multi_lobe_distances
+        RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
+
+        # FIX: Retrieve atmospheric properties BEFORE calculating I
+        P, T = get_atmospheric_properties(h)
+        e_vap = get_vapour_pressure(T, RH)
 
         if self.lobe_number == 1:
             volume = self.envelope.volume()
@@ -212,14 +218,15 @@ class AerostatHull:
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
 
         # Inflation fraction varying with altitude.
-        I = self.inflation_fraction_factor * (T + self.delta_T) / (P + self.delta_P)
+        # Now P and T are correctly defined for this vectorized operation.
+        I = self.inflation_fraction_factor * (T + delta_T) / (P + delta_P)
         I = np.clip(I, 0, 1)
 
-        total_mass = self.skin_density * surface_area + self.additional_mass + self.fin_mass + self.tether_density * h + self.ballonet_fabric_mass * volume**(2/3)
-
-        RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
-        P, T = get_atmospheric_properties(h)
-        e_vap = get_vapour_pressure(T, RH)
+        total_mass = (self.skin_density * surface_area +
+                      self.additional_mass +
+                      self.fin_mass +
+                      self.tether_density * h +
+                      self.ballonet_fabric_mass * volume**(2/3))
 
         # Total ballonet volume varying with altitude.
         BV = (1 - I) * volume
