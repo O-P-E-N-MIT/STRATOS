@@ -719,14 +719,17 @@ class AirshipGUI(QMainWindow):
             self.run_process()
 
     def run_instant_aerostatics(self):
+        """Performs analytical performance calculations and logs design parameters."""
         self.log.append("[PROCESS] Running Analytical Aerostatic Solver...")
         try:
-            p = self.get_parameters(self.current_session_folder)
+            target_dir = self.current_session_folder
+            p = self.get_parameters(target_dir)
+
             from aerostatics import AerostatHull
             from geometry_handler import GertlerEnvelope
 
+            # 1. Initialize Hull and Geometry
             resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
-
             ahull = AerostatHull(
                 envelope=resolved_env,
                 skin_density=p["SKIN_DENSITY"],
@@ -748,12 +751,58 @@ class AirshipGUI(QMainWindow):
                 tether_fraction=p["TETHER_FRACTION"]
             )
 
+            # 2. Get performance arrays
             h, Ln, Lg, I, BV = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+
+            # 3. Calculate Final Design Parameters for Logging
+            # Geometry properties
+            vol = ahull.envelope.volume()
+            surf_area = ahull.envelope.surface_area()
+            max_rad = ahull.envelope.diameter / 2.0
+
+            # Mass properties
+            env_mass = surf_area * ahull.skin_density
+            ballonet_fabric_mass = ahull.ballonet_fabric_mass * (vol ** (2/3))
+            tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
+
+            # Gas mass at operational altitude
+            # P and T at operational height (index -1 of the generated arrays)
+            P_op, T_op = h[-1], I[-1] # Note: I is the array of inflation fractions
+            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_op + p["DELTA_T"]))) * I[-1] * vol
+
+            # Ballonet Radius (Simplified as sphere of equivalent volume)
+            # BV[-1] is ballonet volume at operational altitude
+            v_ballonet_total = BV[-1]
+            v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
+            ballonet_radius = (3 * v_per_ballonet / (4 * 3.14159)) ** (1/3)
+
+            # 4. Log to Status Logger
+            print("\n" + "="*30)
+            print(" FINAL CONSISTENT DESIGN PARAMETERS")
+            print("="*30)
+            print(f"Hull Max Radius:        {max_rad:.4f} m")
+            print(f"Envelope Volume:        {vol:.4f} m³")
+            print(f"Envelope Surface Area:  {surf_area:.4f} m²")
+            print(f"Envelope Mass:          {env_mass:.4f} kg")
+            print("-" * 30)
+            print(f"Ballonet Volume (Op):   {v_ballonet_total:.4f} m³")
+            print(f"Ballonet Radius (Eff):  {ballonet_radius:.4f} m")
+            print(f"Ballonet Fabric Mass:   {ballonet_fabric_mass:.4f} kg")
+            print("-" * 30)
+            print(f"Lifting Gas Mass (Op):  {gas_mass_op:.4f} kg")
+            print(f"Tether Mass @Op Alt:    {tether_mass_op:.4f} kg")
+            print("-" * 30)
+            print(f"Op Inflation Fraction:  {I[-1]*100:.2f} %")
+            print(f"Dep Inflation Fraction: {ahull.inflation_fraction_deploy*100:.2f} %")
+            print("="*30 + "\n")
+
+            # 5. Update GUI Plots
             self.last_aero_data = (h, Ln, Lg, I, BV)
             self.update_aero_plots(h, Ln, Lg, I, BV)
-            self.log.append(f"[SUCCESS] Solver complete. Hull Length: {p['ENVELOPE_LENGTH']:.3f} m")
+            self.log.append(f"[SUCCESS] Design parameters calculated for {p['ENVELOPE_LENGTH']:.3f}m hull.")
+
         except Exception as e:
-            self.log.append(f"[ERROR] Solver failed: {str(e)}")
+            self.log.append(f"[ERROR] Aerostatic logging failed: {str(e)}")
 
     def _auto_update_props(self):
         """Refreshes geometric property labels based on current slider states."""
@@ -926,13 +975,11 @@ class AirshipGUI(QMainWindow):
 
                     # Find length required to achieve TARGET_NET_LIFT
                     target_lift = p.get("TARGET_NET_LIFT", 0)
-                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1e10], target_lift=target_lift)
+                    resolved_env, _ = ahull.initialise_from_operational_altitude([1.0, 1000.0], target_lift=target_lift)
 
                     # Update parameter dictionary and UI slider with the result
                     p["ENVELOPE_LENGTH"] = resolved_env.length
                     self.inputs["ENVELOPE_LENGTH"].set_value(resolved_env.length)
-
-                    print(f"[TEST]: Inflation fraction at deployment: {ahull.inflation_fraction_deploy}")
 
                 except Exception as e:
                     print(f"[PROCESS] Aerostatic optimization failed: {e}")
