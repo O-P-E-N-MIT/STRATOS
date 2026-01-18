@@ -932,6 +932,8 @@ class AirshipGUI(QMainWindow):
                     p["ENVELOPE_LENGTH"] = resolved_env.length
                     self.inputs["ENVELOPE_LENGTH"].set_value(resolved_env.length)
 
+                    print(f"[TEST]: Inflation fraction at deployment: {ahull.inflation_fraction_deploy}")
+
                 except Exception as e:
                     print(f"[PROCESS] Aerostatic optimization failed: {e}")
                     p["ENVELOPE_LENGTH"] = self.inputs["ENVELOPE_LENGTH"].get_value()

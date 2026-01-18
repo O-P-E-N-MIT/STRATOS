@@ -37,7 +37,7 @@ BALLONET_SHAPE_FACTOR = {
 
 def get_atmospheric_properties(z):
     z = np.asarray(z)
-    h = (R * z) / (R + z)
+    h = (RE * z) / (RE + z)
 
     # initialise outputs
     T = np.empty_like(h, dtype=float)
@@ -132,7 +132,7 @@ class AerostatHull:
         # If there are ballonets, the necessary inflation fraction calculations are to be done.
         else:
             self.inflation_fraction_oper = inflation_fraction_oper
-            self.inflation_fraction_deploy = inflation_fraction_oper * (P_op + delta_P) / (P_dep + delta_P) * (T_dep + delta_T) / (T_op + delta_T)
+            self.inflation_fraction_deploy = inflation_fraction_oper * ((P_op + delta_P) / (P_dep + delta_P)) * ((T_dep + delta_T) / (T_op + delta_T))
             self.inflation_fraction_factor = inflation_fraction_oper * (P_op + delta_P) / (T_op + delta_T)
             self.has_ballonets = True
 
