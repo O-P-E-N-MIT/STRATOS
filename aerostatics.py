@@ -3,16 +3,21 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 
 # The ISA atmospheric model used here is modelled only for Troposphere and Tropopause which is enough for our case.
-
 T0 = 288.15             # Ground Temperature
 P0 = 101325             # Ground Pressure
 rho0 = 1.225            # Ground Density
-g = 9.80665             # Acceleration due to gravity at sea level
+ag = 9.80665            # Acceleration due to gravity at sea level
 L  = 0.0065             # Lapse rate in Troposphere
 R  = 287                # Universal gas constant for air
 RE = 6371e3             # Relative Humidity
-K = rho0 * g * T0/P0    # Aerostatic lift constant
+K = rho0 * ag * T0/P0   # Aerostatic lift constant
 RDWV = 0.622            # Relative density of water vapour
+
+# Factors to account for the surface area of the ballonet.
+BALLONET_SHAPE_FACTOR = {
+    "HEMISPHERE": 3 ** (2/3) * 2 ** (1/3),
+    "THREE_QUARTER": 3
+}
 
 # def get_atmospheric_properties(z):
 #     # Geopotential height from geometric height
@@ -44,11 +49,11 @@ def get_atmospheric_properties(z):
 
     # gradient region
     T[grad] = T0 - L*h[grad]
-    P[grad] = P0 * (T[grad]/T0)**(g/(R*L))
+    P[grad] = P0 * (T[grad]/T0)**(ag/(R*L))
 
     # isothermal region
     T[iso] = 216.65
-    P[iso] = 22632 * np.exp(-g*(h[iso]-11000)/(R*216.65))
+    P[iso] = 22632 * np.exp(-ag*(h[iso]-11000)/(R*216.65))
 
     return P, T
 
@@ -80,15 +85,15 @@ def get_net_lift (
     Lg = K * volume * (P - (1-RDWV)*e) / T
 
     # Net static lift
-    return Lg - (rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume + total_mass) * g
+    return Lg - (rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume + total_mass) * ag
 
 class AerostatHull:
 
     def __init__(
             self,
             envelope,                       # The envelope to be modelled as Aerostat.
+            skin_density,                   # Density of the skin of the hull (kg/m^2).
             additional_mass,                # Additional mass of the envelope.
-            skin_density,                   # Density of the skin of the hull (kg/m^3).
             operational_height,             # Operational altitude of the envelope.
             deployment_height,              # Deployment altitude of the envelope.
             margin_height,                  # Margin for the pressure altitude.
@@ -99,7 +104,18 @@ class AerostatHull:
             gas_constant,                   # Gas constant for the gas filled in the aerostat.
             inflation_fraction_oper=0.9,    # Inflation Fraction at operation.
             lobe_number=1,                  # Lobe number
-            e=0, f=0, g=0                   # Lobe offsets
+            e=0, f=0, g=0,                  # Lobe offsets
+            fin_rc=0,                       # Root chord of the fin.
+            fin_taper_ratio=1,              # Taper ratio of the fin.
+            fin_height=0,                   # Height of the fin.
+            fin_thickness=0,                # Ratio of fin thickness to chord ratio of the NACA airfoil to be used.
+            fin_density=0,                  # Density of the fin material (kg/m^3).
+            fin_number=1,                   # Fin number.
+            ballonet_number=2,              # Number of ballonets.
+            ballonet_shape="THREE_QUARTER", # Ballonet shape.
+            ballonet_fabric_density=0.35,   # Ballonet fabric density (kg/m^2).
+            tether_density=0,               # Density of the tether used (kg/m).
+            tether_fraction=1,              # Fraction of tether weight carried.
     ):
         P_dep, T_dep = get_atmospheric_properties(deployment_height)
         P_op,  T_op  = get_atmospheric_properties(operational_height)
@@ -119,6 +135,15 @@ class AerostatHull:
         self.skin_density = skin_density
         self.additional_mass = additional_mass
 
+        # Tether weight per unit meter.
+        self.tether_density = tether_density * tether_fraction
+
+        # Ballonet fabric mass per unit volume^2/3
+        self.ballonet_fabric_mass = BALLONET_SHAPE_FACTOR.get(ballonet_shape, 3) * ballonet_fabric_density * (np.pi * ballonet_number)**(1/3)
+
+        # TODO: Modify the formula to take account for FIN_TIP_ANGLE.
+        self.fin_mass = 0.0393 * fin_thickness*1e-2 * fin_rc**2 * fin_height * fin_density * (fin_taper_ratio + (fin_taper_ratio - 1)**2 / 3) * fin_number
+
     def initialise_from_operational_altitude (self, volume_bounds, target_lift=0):
         envelope, convergence = self.get_envelope_from_target(target_lift, self.operational_altitude, volume_bounds)
         self.envelope = envelope
@@ -129,39 +154,42 @@ class AerostatHull:
         lobe_number = self.lobe_number
         e, f, g = self.multi_lobe_distances
         skin_density = self.skin_density
-        additional_mass = self.additional_mass
+        ballonet_mass = self.ballonet_fabric_mass
+        additional_mass = self.additional_mass + self.fin_mass + self.tether_density * target_altitude
         min_volume, max_volume = volume_bounds
 
+        # TODO: Figure out a method to figure out an initial guess and use that to use fsolve instead of using root_scalar
+        # which requires us to ask the user for a maximum volume bound.
         min_length = envelope.set_volume(min_volume or 1e-3, lobe_number, e, f, g).length
         max_length = envelope.set_volume(max_volume, lobe_number, e, f, g).length
 
-        # TODO: Include fin mass
+        # This has been done because surface area and volume calculations are done by using different methods for different
+        # configurations of airship. Using an if branch statement inside a function which is to be optimised may take a hit on
+        # performance so the function used is changed based on the configuration.
         if lobe_number == 1:
             def func (l):
-                envelope.set_length(l)
+                envelope.set_length(l or 1e-3)
                 volume_iter = envelope.volume()
-                mass_iter = skin_density * envelope.surface_area() + additional_mass
+                mass_iter = skin_density * envelope.surface_area() + ballonet_mass * volume_iter**(2/3) + additional_mass
                 l = get_net_lift(volume_iter, mass_iter, target_altitude, *self.gas_properties)
                 return abs(l - target_lift)
         elif lobe_number == 2:
             def func (l):
-                envelope.set_length(l)
+                envelope.set_length(l or 1e-3)
                 volume_iter = envelope.volume_bilobe(f)
-                mass_iter = skin_density * envelope.surface_area_bilobe(f) + additional_mass
+                mass_iter = skin_density * envelope.surface_area_bilobe(f) + ballonet_mass * volume_iter**(2/3) + additional_mass
                 l = get_net_lift(volume_iter, mass_iter, target_altitude, *self.gas_properties)
                 return abs(l - target_lift)
         else:
             def func (l):
-                envelope.set_length(l)
+                envelope.set_length(l or 1e-3)
                 volume_iter = envelope.volume_trilobe(e, f, g)
-                mass_iter = skin_density * envelope.surface_area_trilobe(e, f, g) + additional_mass
+                mass_iter = skin_density * envelope.surface_area_trilobe(e, f, g) + ballonet_mass * volume_iter**(2/3) + additional_mass
                 l = get_net_lift(volume_iter, mass_iter, target_altitude, *self.gas_properties)
                 return abs(l - target_lift)
 
         sol = minimize_scalar(func, bounds=(min_length, max_length), method='bounded', options={'xatol': 1e-8})
-        convergence = (sol.fun - target_lift) / max(target_lift, 1e-3) * 100
-
-        return envelope, convergence
+        return envelope, sol.fun
 
     def get_properties (self, n=None):
         # If number of points to be taken for altitude is not given, it would be assumed to be taken for every 100m.
@@ -169,7 +197,6 @@ class AerostatHull:
             n = int((self.pressure_altitude - self.deployment_altitude) / 100)
 
         h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
-        L = np.zeros_like(h)
 
         # FIX: Correctly extract offsets from the tuple defined in __init__
         e, f, g = self.multi_lobe_distances
@@ -184,7 +211,7 @@ class AerostatHull:
             volume = self.envelope.volume_trilobe(e, f, g)
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
 
-        total_mass = self.skin_density * surface_area + self.additional_mass
+        total_mass = self.skin_density * surface_area + self.additional_mass + self.fin_mass + self.tether_density * h + self.ballonet_fabric_mass * volume**(2/3)
 
         RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
         P, T = get_atmospheric_properties(h)
@@ -204,7 +231,7 @@ class AerostatHull:
         Lg = K * volume * (P - (1-RDWV)*e_vap) / T
 
         # Net static lift
-        Ln = Lg - (rho_lg * I * volume + rho_ba * BV + total_mass) * g
+        Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
         return h, Ln, Lg, I, BV
 

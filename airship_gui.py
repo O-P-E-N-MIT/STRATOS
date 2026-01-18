@@ -691,8 +691,17 @@ class AirshipGUI(QMainWindow):
                 lobe_number=p.get("LOBE_NUMBER", 1),
                 e=p.get("LOBE_OFFSET_X", 0),
                 f=p.get("LOBE_OFFSET_Y", 0),
-                g=p.get("LOBE_OFFSET_Z", 0)
+                g=p.get("LOBE_OFFSET_Z", 0),
+                tether_density=p.get("TETHER_DENSITY", 0),
+                fin_rc=p.get("FIN_RC_LENGTH"),                      
+                fin_taper_ratio=p.get("FIN_TAPER_RATIO"),           
+                fin_height=p.get("FIN_HEIGHT"),                  
+                fin_thickness=p.get("FIN_THICKNESS"),
+                fin_density=p.get("FIN_DENSITY", 2700)
             )
+
+            optimised_envelope, optimised_lift = ahull.initialise_from_operational_altitude([0, 1e15])
+            p["ENVELOPE_LENGTH"] = optimised_envelope.length
 
             # 3. Compute arrays for plotting (h, Ln, Lg, I, BV)
             h, Ln, Lg, I, BV = ahull.get_properties(n=100)
@@ -701,7 +710,7 @@ class AirshipGUI(QMainWindow):
             # 4. Refresh Dashboard graphs
             self.update_aero_plots(h, Ln, Lg, I, BV)
 
-            self.log.append(f"[SUCCESS] Calculation complete.")
+            self.log.append(f"[SUCCESS] Optimisation complete with {optimised_lift:.3f}N lift at Operational altitude.")
             self.log.append(f"[INFO] Final Hull Length: {p['ENVELOPE_LENGTH']:.3f} m")
         except Exception as e:
             self.log.append(f"[ERROR] Solver failed: {str(e)}")
@@ -859,7 +868,7 @@ class AirshipGUI(QMainWindow):
                 # 2. Solve for length that achieves TARGET_NET_LIFT at OPERATIONAL_HEIGHT
                 # Requires updated aerostatics.py that supports target_lift argument
                 target_lift = p.get("TARGET_NET_LIFT", 0)
-                resolved_env, _ = ahull.initialise_from_operational_altitude([1, 1000000], target_lift=target_lift)
+                resolved_env, _ = ahull.initialise_from_operational_altitude([1, 1e20], target_lift=target_lift)
 
                 # 3. Update the parameter dictionary with the optimized length
                 p["ENVELOPE_LENGTH"] = resolved_env.length
@@ -988,7 +997,12 @@ class AirshipGUI(QMainWindow):
                     RH=p.get("RELATIVE_HUMIDITY", 0.7),
                     purity=p.get("GAS_PURITY", 0.97),
                     delta_P=500, delta_T=5,
-                    gas_constant=p.get("GAS_CONSTANT", 2077)
+                    gas_constant=p.get("GAS_CONSTANT", 2077),
+                    tether_density=p.get("TETHER_DENSITY", 0),
+                    fin_rc=p.get("FIN_RC_LENGTH"),                      
+                    fin_taper_ratio=p.get("FIN_TAPER_RATIO"),           
+                    fin_height=p.get("FIN_HEIGHT"),                  
+                    fin_thickness=p.get("FIN_THICKNESS")
                 )
 
                 h, Ln, Lg, I, BV = ahull.get_properties(n=100)

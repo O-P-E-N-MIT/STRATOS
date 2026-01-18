@@ -384,8 +384,8 @@ def get_trilobe_axis (extreme_lobe, central_lobe, e):
     # Due to discretization of X axis, the extreme lobe length and distance of central lobe from Y axis will be
     # different than the ideal values specified. Higher the value of n, closer will be to their ideal values.
     # TODO: Again, this may not be the best way to do it.
-    extreme_lobe_length = X[extreme_lobe_end_index]     # Ideal value: self.envelope
-    central_lobe_start = X[central_lobe_start_index]    # Ideal value: e
+    extreme_lobe_length = X[extreme_lobe_end_index] or 1e-8 # Ideal value: self.envelope
+    central_lobe_start = X[central_lobe_start_index]        # Ideal value: e
 
     # Radius of extreme lobe along the X axis
     # NOTE: This maybe a crude way to do this wihout using .points()
