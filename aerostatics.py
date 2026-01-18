@@ -213,11 +213,11 @@ class AerostatHull:
 
         h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
 
-        # FIX: Correctly extract offsets from the tuple defined in __init__
+        # Correctly extract offsets and gas properties from the class instance
         e, f, g = self.multi_lobe_distances
         RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
 
-        # FIX: Retrieve atmospheric properties BEFORE calculating I
+        # Retrieve atmospheric properties at all altitudes in h
         P, T = get_atmospheric_properties(h)
         e_vap = get_vapour_pressure(T, RH)
 
@@ -231,15 +231,15 @@ class AerostatHull:
             volume = self.envelope.volume_trilobe(e, f, g)
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
 
-        # If there are ballonets, the inflation fraction will vary with altitude.
+        # If there are ballonets, the inflation fraction will vary with altitude
         if self.has_ballonets:
             I = self.inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
             I = np.clip(I, 0, 1)
-        # If there are no ballonets, the inflation fraction is always 1.
+        # If there are no ballonets, the inflation fraction is always 1
         else:
             I = np.full_like(P, 1)
 
-        # NEW: Calculate tether mass only if included
+        # Calculate tether mass only if included by the user
         current_tether_mass = (self.tether_density * h) if include_tether else 0
 
         total_mass = (self.skin_density * surface_area +
@@ -248,7 +248,7 @@ class AerostatHull:
                       current_tether_mass + # Conditionally applied tether weight
                       self.ballonet_fabric_mass * volume**(2/3))
 
-        # Total ballonet volume varying with altitude.
+        # Total ballonet volume varying with altitude
         BV = (1 - I) * volume
 
         rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
@@ -257,7 +257,7 @@ class AerostatHull:
         # Gross static lift
         Lg = K * volume * (P - (1-RDWV)*e_vap) / T
 
-        # Net static lift
+        # Net static lift calculation
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
         return h, Ln, Lg, I, BV
