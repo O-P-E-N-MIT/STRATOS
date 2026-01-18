@@ -363,7 +363,7 @@ class AirshipGUI(QMainWindow):
         el = QGridLayout(env_grp)
         self.inputs["OPERATIONAL_HEIGHT"] = LabeledSlider("Op. Altitude (m)", 0, 20000, 4500, 10, 0)
         self.inputs["RELATIVE_HUMIDITY"] = LabeledSlider("Rel. Humidity (0-1)", 0, 1, 0.7, 0.01, 2)
-        self.inputs["MARGIN_HEIGHT"] = LabeledSlider("Pressure Margin (m)", 0, 2000, 500, 10, 0) # NEW
+        self.inputs["MARGIN_HEIGHT"] = LabeledSlider("Pressure Margin (m)", 0, 2000, 500, 10, 0)
         el.addWidget(self.inputs["OPERATIONAL_HEIGHT"], 0, 0)
         el.addWidget(self.inputs["RELATIVE_HUMIDITY"], 0, 1)
         el.addWidget(self.inputs["MARGIN_HEIGHT"], 1, 0)
@@ -374,38 +374,46 @@ class AirshipGUI(QMainWindow):
         gl = QGridLayout(gas_grp)
         self.inputs["GAS_PURITY"] = LabeledSlider("Purity (0-1)", 0.8, 1, 0.97, 0.001, 3)
         self.inputs["GAS_CONSTANT"] = LabeledSlider("Gas Constant (He=2077)", 200, 4200, 2077, 1, 0)
-        self.inputs["DELTA_P"] = LabeledSlider("Delta P (Pa)", 0, 1000, 500, 1, 0)
-        self.inputs["DELTA_T"] = LabeledSlider("Delta T (K)", 0, 20, 5, 0.1, 1)
         gl.addWidget(self.inputs["GAS_PURITY"], 0, 0)
         gl.addWidget(self.inputs["GAS_CONSTANT"], 0, 1)
-        gl.addWidget(self.inputs["DELTA_P"], 1, 0)
-        gl.addWidget(self.inputs["DELTA_T"], 1, 1)
         layout.addWidget(gas_grp)
 
-        # 3. Mass and Envelope Design
+        # 3. Mass and Structural Design
         mass_grp = QGroupBox("Mass and Structural Design")
         ml = QGridLayout(mass_grp)
         self.inputs["SKIN_DENSITY"] = LabeledSlider("Skin Density (kg/m²)", 0.1, 2.0, 0.75, 0.01, 2)
         self.inputs["PAYLOAD_MASS"] = LabeledSlider("Payload/Add. Mass (kg)", 0, 5000, 220, 1, 1)
-        self.inputs["TETHER_DENSITY"] = LabeledSlider("Tether (kg/m)", 0, 5, 0.1, 0.01, 2) # NEW
-        self.inputs["FIN_DENSITY"] = LabeledSlider("Fin Material (kg/m³)", 0, 3000, 2700, 1, 0) # NEW
-        self.inputs["TARGET_NET_LIFT"] = LabeledSlider("Target Net Lift (N)", -1000, 5000, 0, 1, 1)
 
-        # NEW: Optimization Checkbox
+        # Tether Controls
+        self.inputs["INCLUDE_TETHER"] = QCheckBox("INCLUDE TETHER MASS")
+        self.inputs["INCLUDE_TETHER"].setChecked(True)
+        self.inputs["INCLUDE_TETHER"].setStyleSheet("color: #00BFFF; font-weight: bold;")
+
+        # NEW: Connect the checkbox to the toggle function
+        self.inputs["INCLUDE_TETHER"].toggled.connect(self._toggle_tether_inputs)
+
+        self.inputs["TETHER_DENSITY"] = LabeledSlider("Tether Density (kg/m)", 0, 5, 0.1, 0.01, 2)
+        self.inputs["TETHER_FRACTION"] = LabeledSlider("Tether Fraction (0-1)", 0, 1, 1.0, 0.01, 2)
+
+        self.inputs["TARGET_NET_LIFT"] = LabeledSlider("Target Net Lift (N)", -1000, 5000, 0, 1, 1)
         self.inputs["OPTIMIZE_LENGTH"] = QCheckBox("OPTIMIZE LENGTH FOR TARGET LIFT")
         self.inputs["OPTIMIZE_LENGTH"].setChecked(True)
-        self.inputs["OPTIMIZE_LENGTH"].setFont(QFont("Arial", 10, QFont.Bold))
-        self.inputs["OPTIMIZE_LENGTH"].setStyleSheet("color: #00BFFF; margin-top: 10px;")
 
         ml.addWidget(self.inputs["SKIN_DENSITY"], 0, 0)
         ml.addWidget(self.inputs["PAYLOAD_MASS"], 0, 1)
-        ml.addWidget(self.inputs["TETHER_DENSITY"], 1, 0)
-        ml.addWidget(self.inputs["FIN_DENSITY"], 1, 1)
-        ml.addWidget(self.inputs["TARGET_NET_LIFT"], 2, 0)
-        ml.addWidget(self.inputs["OPTIMIZE_LENGTH"], 3, 0, 1, 2)
+        ml.addWidget(self.inputs["INCLUDE_TETHER"], 1, 0)
+        ml.addWidget(self.inputs["TETHER_DENSITY"], 2, 0)
+        ml.addWidget(self.inputs["TETHER_FRACTION"], 2, 1)
+        ml.addWidget(self.inputs["TARGET_NET_LIFT"], 3, 0)
+        ml.addWidget(self.inputs["OPTIMIZE_LENGTH"], 4, 0, 1, 2)
         layout.addWidget(mass_grp)
 
         layout.addStretch()
+
+    def _toggle_tether_inputs(self, enabled):
+        """Enables or disables tether-related sliders based on the checkbox state."""
+        self.inputs["TETHER_DENSITY"].setEnabled(enabled)
+        self.inputs["TETHER_FRACTION"].setEnabled(enabled)
 
     def refresh_tabs(self):
         self.tab_widget.blockSignals(True)
@@ -685,7 +693,6 @@ class AirshipGUI(QMainWindow):
 
             resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
 
-            # FIXED: Comprehensive parameter passing for finalized performance calculation
             ahull = AerostatHull(
                 envelope=resolved_env,
                 additional_mass=p.get("PAYLOAD_MASS", 220),
@@ -702,14 +709,13 @@ class AirshipGUI(QMainWindow):
                 e=p.get("LOBE_OFFSET_X", 0),
                 f=p.get("LOBE_OFFSET_Y", 0),
                 g=p.get("LOBE_OFFSET_Z", 0),
-                fin_rc=p.get("FIN_RC_LENGTH", 0),
-                fin_height=p.get("FIN_HEIGHT", 0),
-                fin_taper_ratio=p.get("FIN_TAPER_RATIO", 1),
-                fin_thickness=p.get("FIN_THICKNESS", 0),
-                fin_number=p.get("FIN_NUMBER", 4)
+                # Pass tether data
+                tether_density=p.get("TETHER_DENSITY", 0),
+                tether_fraction=p.get("TETHER_FRACTION", 1.0)
             )
 
-            h, Ln, Lg, I, BV = ahull.get_properties(n=100)
+            # Use the include_tether flag in properties calculation
+            h, Ln, Lg, I, BV = ahull.get_properties(n=100, include_tether=p.get("INCLUDE_TETHER"))
             self.last_aero_data = (h, Ln, Lg, I, BV)
             self.update_aero_plots(h, Ln, Lg, I, BV)
 
@@ -816,7 +822,7 @@ class AirshipGUI(QMainWindow):
         Handles analytical optimization for Aerostatic mode and length scaling for Volumetric mode.
         """
         p = {}
-        # Comprehensive list of all slider keys used across all tabs
+        # Comprehensive list of all slider keys used across all tabs, updated with Tether parameters
         all_keys = [
             "ENVELOPE_LENGTH", "ENVELOPE_RESOLUTION", "m1", "r0", "r1", "cp", "l2d",
             "FIN_AXIAL_OFFSET", "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS",
@@ -824,7 +830,8 @@ class AirshipGUI(QMainWindow):
             "FIN_SECTION_RESOLUTION", "THETA_RES", "PHI_RES", "ASPECT_RATIO",
             "BULGE_AMPLITUDE", "BULGE_POWER", "GORE_AMPLITUDE", "GORE_FADE_POWER",
             "OPERATIONAL_HEIGHT", "RELATIVE_HUMIDITY", "GAS_PURITY", "GAS_CONSTANT",
-            "DELTA_P", "DELTA_T", "SKIN_DENSITY", "PAYLOAD_MASS", "TARGET_NET_LIFT"
+            "DELTA_P", "DELTA_T", "SKIN_DENSITY", "PAYLOAD_MASS", "TARGET_NET_LIFT",
+            "TETHER_DENSITY", "TETHER_FRACTION"  # NEW: Added for optional tether logic
         ]
 
         # Extract numerical values from sliders
@@ -832,7 +839,8 @@ class AirshipGUI(QMainWindow):
             if key in self.inputs:
                 p[key] = self.inputs[key].get_value()
 
-        # Extract fixed/text and multi-lobe inputs
+        # Extract fixed/text, multi-lobe inputs, and the new tether toggle
+        p["INCLUDE_TETHER"] = self.inputs["INCLUDE_TETHER"].isChecked() # NEW: Optionality toggle
         p["N_PETALS"] = self.inputs["N_PETALS"].get_value()
         p["LOBE_OFFSET_X"] = self.inputs["LOBE_OFFSET_X_SLIDER"].get_value()
         p["LOBE_OFFSET_Y"] = self.inputs["LOBE_OFFSET_Y_SLIDER"].get_value()
@@ -872,6 +880,9 @@ class AirshipGUI(QMainWindow):
                         e=p.get("LOBE_OFFSET_X", 0),
                         f=p.get("LOBE_OFFSET_Y", 0),
                         g=p.get("LOBE_OFFSET_Z", 0),
+                        # Passing tether parameters to the solver
+                        tether_density=p.get("TETHER_DENSITY", 0) if p["INCLUDE_TETHER"] else 0,
+                        tether_fraction=p.get("TETHER_FRACTION", 1.0),
                         fin_rc=p.get("FIN_RC_LENGTH", 0),
                         fin_height=p.get("FIN_HEIGHT", 0),
                         fin_taper_ratio=p.get("FIN_TAPER_RATIO", 1),

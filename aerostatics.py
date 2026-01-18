@@ -205,7 +205,7 @@ class AerostatHull:
         sol = minimize_scalar(func, bounds=(min_length, max_length), method='bounded', options={'xatol': 1e-8})
         return envelope, sol.fun
 
-    def get_properties (self, n=None):
+    def get_properties (self, n=None, include_tether=True):
         # If number of points to be taken for altitude is not given,
         # it would be assumed to be taken for every 100m.
         if n is None:
@@ -239,10 +239,13 @@ class AerostatHull:
         else:
             I = np.full_like(P, 1)
 
+        # NEW: Calculate tether mass only if included
+        current_tether_mass = (self.tether_density * h) if include_tether else 0
+
         total_mass = (self.skin_density * surface_area +
                       self.additional_mass +
                       self.fin_mass +
-                      self.tether_density * h +
+                      current_tether_mass + # Conditionally applied tether weight
                       self.ballonet_fabric_mass * volume**(2/3))
 
         # Total ballonet volume varying with altitude.
