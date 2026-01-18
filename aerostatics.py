@@ -63,15 +63,15 @@ def get_vapour_pressure (T, RH):
     return RH * e_sat
 
 def get_net_lift (
-        volume,                 # Volume of the envelope.
-        total_mass,             # Fixed mass of the aerostat.
-        operational_height,     # Operational altitude of the envelope.
-        RH,                     # Relative Humidity (0-1).   
-        purity,                 # Purity of lifting gas.
-        delta_P,                # Increment in lifting gas pressure.
-        delta_T,                # Increment in lifting gas temperature.
-        gas_constant,           # Gas constant for the gas filled in the aerostat.
-        inflation_fraction      # Inflation Fraction.
+        volume,                     # Volume of the envelope.
+        total_mass,                 # Fixed mass of the aerostat.
+        operational_height,         # Operational altitude of the envelope.
+        RH,                         # Relative Humidity (0-1).   
+        purity,                     # Purity of lifting gas.
+        delta_P,                    # Increment in lifting gas pressure.
+        delta_T,                    # Increment in lifting gas temperature.
+        gas_constant,               # Gas constant for the gas filled in the aerostat.
+        inflation_fraction_factor   # Inflation Fraction factor.
 ):
     P, T = get_atmospheric_properties(operational_height)
     e = get_vapour_pressure(T, RH)
@@ -80,6 +80,9 @@ def get_net_lift (
     # TODO: Correct these formulae.
     rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
     rho_ba = P/(287*T)
+
+    # Get the inflation fraction at that altitude.
+    inflation_fraction = inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
 
     # Gross static lift
     Lg = K * volume * (P - (1-RDWV)*e) / T
@@ -120,26 +123,37 @@ class AerostatHull:
         P_dep, T_dep = get_atmospheric_properties(deployment_height)
         P_op,  T_op  = get_atmospheric_properties(operational_height)
 
-        self.inflation_fraction_deploy = inflation_fraction_oper * (P_op + delta_P) / (P_dep + delta_P) * (T_dep + delta_T) / (T_op + delta_T)
-        self.inflation_fraction_oper = inflation_fraction_oper
-        self.inflation_fraction_factor = inflation_fraction_oper * (P_op + delta_P) / (T_op + delta_T)
+        # In case if there are no ballonets, the inflation fraction is always 1.
+        if ballonet_number == 0:
+            self.inflation_fraction_oper = 1
+            self.inflation_fraction_deploy = 1
+            self.inflation_fraction_factor = UnitMultiplier()
+            self.has_ballonets = False
+        # If there are ballonets, the necessary inflation fraction calculations are to be done.
+        else:
+            self.inflation_fraction_oper = inflation_fraction_oper
+            self.inflation_fraction_deploy = inflation_fraction_oper * (P_op + delta_P) / (P_dep + delta_P) * (T_dep + delta_T) / (T_op + delta_T)
+            self.inflation_fraction_factor = inflation_fraction_oper * (P_op + delta_P) / (T_op + delta_T)
+            self.has_ballonets = True
+
         self.delta_P = delta_P
         self.delta_T = delta_T
         self.deployment_altitude = deployment_height
         self.operational_altitude = operational_height
         self.pressure_altitude = margin_height + operational_height
         self.envelope = envelope
-        self.gas_properties = (RH, purity, delta_P, delta_T, gas_constant, inflation_fraction_oper)
+        self.gas_properties = (RH, purity, delta_P, delta_T, gas_constant, self.inflation_fraction_factor)
         self.lobe_number = lobe_number
         self.multi_lobe_distances = (e, f, g)
         self.skin_density = skin_density
         self.additional_mass = additional_mass
+        self.has_ballonets = ballonet_number != 0
 
         # Tether weight per unit meter.
         self.tether_density = tether_density * tether_fraction
 
         # Ballonet fabric mass per unit volume of envelope^2/3
-        self.ballonet_fabric_mass = BALLONET_SHAPE_FACTOR.get(ballonet_shape, 3) * ballonet_fabric_density * (np.pi * ballonet_number)**(1/3) * (1 - self.inflation_fraction_deploy)**(2/3)
+        self.ballonet_fabric_mass = BALLONET_SHAPE_FACTOR.get(ballonet_shape, 3) * ballonet_fabric_density * (np.pi * ballonet_number)**(1/3) * (1 - self.inflation_fraction_deploy)**(2/3) 
 
         # TODO: Modify the formula to take account for FIN_TIP_ANGLE.
         self.fin_mass = 0.0393 * fin_thickness*1e-2 * fin_rc**2 * fin_height * fin_density * (fin_taper_ratio + (fin_taper_ratio - 1)**2 / 3) * fin_number
@@ -217,10 +231,13 @@ class AerostatHull:
             volume = self.envelope.volume_trilobe(e, f, g)
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
 
-        # Inflation fraction varying with altitude.
-        # Now P and T are correctly defined for this vectorized operation.
-        I = self.inflation_fraction_factor * (T + delta_T) / (P + delta_P)
-        I = np.clip(I, 0, 1)
+        # If there are ballonets, the inflation fraction will vary with altitude.
+        if self.has_ballonets:
+            I = self.inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
+            I = np.clip(I, 0, 1)
+        # If there are no ballonets, the inflation fraction is always 1.
+        else:
+            I = np.full_like(P, 1)
 
         total_mass = (self.skin_density * surface_area +
                       self.additional_mass +
@@ -241,6 +258,15 @@ class AerostatHull:
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
         return h, Ln, Lg, I, BV
+    
+# A unique number which when multiplied by anything will end up giving 1.
+class UnitMultiplier:
+
+    def __mul__(self, other):
+        return 1
+    
+    def __rmul__(self, other):
+        return 1
 
 # Testing
 
