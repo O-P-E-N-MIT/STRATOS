@@ -195,7 +195,7 @@ class AirshipGUI(QMainWindow):
         self.output_tab = QWidget()
 
         self.setup_primary_tab_layout()
-        self.setup_aerostatics_tab()
+        self.setup_aerostat_tab()
         self.setup_fairings_tab()
         self.setup_fin_tab()
         self.setup_output_tab()
@@ -227,7 +227,7 @@ class AirshipGUI(QMainWindow):
     def _init_persistent_controls(self):
         self.mode_button_group = QButtonGroup(self)
         self.mode_btns = []
-        for i, name in enumerate(["STANDARD MODE", "VOLUMETRIC MODE", "SUPER PRESSURE BALLOON", "AEROSTATIC"], 1):
+        for i, name in enumerate(["STANDARD MODE", "VOLUMETRIC MODE", "SUPER PRESSURE BALLOON", "AEROSTAT"], 1):
             btn = QPushButton(name)
             btn.setCheckable(True)
             btn.setMinimumHeight(40)
@@ -361,9 +361,9 @@ class AirshipGUI(QMainWindow):
         layout.addWidget(self.volume_box)
         layout.addStretch()
 
-    def setup_aerostatics_tab(self):
-        self.aerostatics_tab = QWidget()
-        tab_layout = QVBoxLayout(self.aerostatics_tab)
+    def setup_aerostat_tab(self):
+        self.aerostat_tab = QWidget()
+        tab_layout = QVBoxLayout(self.aerostat_tab)
 
         # Create the Scroll Area
         scroll = QScrollArea()
@@ -476,7 +476,7 @@ class AirshipGUI(QMainWindow):
             self.btn_plot.hide()
             self.btn_csv.show()
 
-            # Hide Added Mass and Export Format controls in Aerostatic mode
+            # Hide Added Mass and Export Format controls in Aerostat mode
             self.inputs["COMPUTE_ADDED_MASS"].hide()
             # To hide the radio buttons, we hide the layout container they live in
             for i in range(self.format_button_group.buttons().__len__()):
@@ -506,7 +506,7 @@ class AirshipGUI(QMainWindow):
         self.tab_widget.addTab(self.primary_input_tab, "Envelope Geometry")
 
         if is_aero:
-            self.tab_widget.addTab(self.aerostatics_tab, "Aerostatic Analysis")
+            self.tab_widget.addTab(self.aerostat_tab, "Aerostat Analysis")
         if is_multi:
             self.tab_widget.addTab(self.fairings_tab, "Multi-Lobe Configuration")
         if not is_balloon:
@@ -682,7 +682,7 @@ class AirshipGUI(QMainWindow):
         matrix_vbox.addWidget(self.matrix_table)
         self.right_layout.addWidget(self.matrix_group)
 
-        self.aero_analysis_group = QGroupBox("Aerostatic Performance Analysis")
+        self.aero_analysis_group = QGroupBox("Aerostat Performance Analysis")
         self.aero_analysis_group.hide()
         aero_vbox = QVBoxLayout(self.aero_analysis_group)
         self.fig = Figure(facecolor='#1e1e1e', tight_layout=True)
@@ -714,18 +714,18 @@ class AirshipGUI(QMainWindow):
     def handle_output_action(self):
         """Routes the button click based on mode; skips generation in Aero mode."""
         if self.mode_button_group.checkedId() == 4:
-            self.run_instant_aerostatics()
+            self.run_instant_aerostat()
         else:
             self.run_process()
 
-    def run_instant_aerostatics(self):
+    def run_instant_aerostat(self):
         """Performs analytical performance calculations and logs design parameters."""
-        self.log.append("[PROCESS] Running Analytical Aerostatic Solver...")
+        self.log.append("[PROCESS] Running Analytical Aerostat Solver...")
         try:
             target_dir = self.current_session_folder
             p = self.get_parameters(target_dir)
 
-            from aerostatics import AerostatHull
+            from aerostat import AerostatHull
             from geometry_handler import GertlerEnvelope
 
             # 1. Initialize Hull and Geometry
@@ -774,6 +774,7 @@ class AirshipGUI(QMainWindow):
             gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_op + p["DELTA_T"]))) * I[operational_index] * vol
 
             # Ballonet Radius (Simplified as sphere of equivalent volume)
+            # BV[-1] is ballonet volume at operational altitude
             v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
             ballonet_radius = (3 * v_per_ballonet / (4 * 3.14159)) ** (1/3)
@@ -804,7 +805,7 @@ class AirshipGUI(QMainWindow):
             self.log.append(f"[SUCCESS] Design parameters calculated for {p['ENVELOPE_LENGTH']:.3f}m hull.")
 
         except Exception as e:
-            self.log.append(f"[ERROR] Aerostatic logging failed: {str(e)}")
+            self.log.append(f"[ERROR] Aerostat logging failed: {str(e)}")
 
     def _auto_update_props(self):
         """Refreshes geometric property labels based on current slider states."""
@@ -902,7 +903,7 @@ class AirshipGUI(QMainWindow):
     def get_parameters(self, target_dir):
         """
         Gathers all current GUI inputs into a single parameters dictionary.
-        Handles analytical optimization for Aerostatic mode and length scaling for Volumetric mode.
+        Handles analytical optimization for Aerostat mode and length scaling for Volumetric mode.
         """
         p = {}
         # Comprehensive list of all slider keys used across all tabs
@@ -938,9 +939,9 @@ class AirshipGUI(QMainWindow):
 
         mode_id = self.mode_button_group.checkedId()
 
-        # --- AEROSTATIC OPTIMIZATION LOGIC (MODE 4) ---
+        # --- AEROSTAT OPTIMIZATION LOGIC (MODE 4) ---
         if mode_id == 4:
-            from aerostatics import AerostatHull
+            from aerostat import AerostatHull
             from geometry_handler import GertlerEnvelope
 
             # Only run optimization if the specific UI checkbox is enabled
@@ -984,7 +985,7 @@ class AirshipGUI(QMainWindow):
                     self.inputs["ENVELOPE_LENGTH"].set_value(resolved_env.length)
 
                 except Exception as e:
-                    print(f"[PROCESS] Aerostatic optimization failed: {e}")
+                    print(f"[PROCESS] Aerostat optimization failed: {e}")
                     p["ENVELOPE_LENGTH"] = self.inputs["ENVELOPE_LENGTH"].get_value()
             else:
                 # If optimization is unchecked, use the user-defined slider length
@@ -1098,7 +1099,7 @@ class AirshipGUI(QMainWindow):
         if self.mode_button_group.checkedId() == 4:
             try:
                 p = self.get_parameters(self.current_session_folder)
-                from aerostatics import AerostatHull
+                from aerostat import AerostatHull
                 from geometry_handler import GertlerEnvelope
 
                 resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
@@ -1130,7 +1131,7 @@ class AirshipGUI(QMainWindow):
                 self.update_aero_plots(h, Ln, Lg, I, BV)
                 self.log.append(f"[SUCCESS] Dashboard updated for {p['ENVELOPE_LENGTH']:.3f} m hull.")
             except Exception as e:
-                self.log.append(f"[ERROR] Aerostatic display failed: {str(e)}")
+                self.log.append(f"[ERROR] Aerostat display failed: {str(e)}")
 
         elif matrix is not None:
             for r in range(6):
@@ -1193,7 +1194,7 @@ class AirshipGUI(QMainWindow):
         for key, val in balloon_keys.items():
             if key in self.inputs: self.inputs[key].set_value(val)
 
-        # 4. Aerostatic Sliders (Mode 4)
+        # 4. Aerostat Sliders (Mode 4)
         aero_keys = {
             "OPERATIONAL_HEIGHT": 4500.0, "RELATIVE_HUMIDITY": 0.7,
             "GAS_PURITY": 0.97, "GAS_CONSTANT": 2077.0,
