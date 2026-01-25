@@ -145,7 +145,7 @@ class AirshipGeometry:
             raise RuntimeError(f"Salome execution failed: {e}")
 
     def geometric_properties(self):
-        """Calculates theoretical geometric values for property display."""
+        """Calculates theoretical geometric values including hull and fins."""
         envelope = GertlerEnvelope.from_parameters(
             self.params["ENVELOPE_PARAMS"],
             self.params["ENVELOPE_LENGTH"],
@@ -157,12 +157,42 @@ class AirshipGeometry:
         f = self.params["LOBE_OFFSET_Y"]
         g = self.params["LOBE_OFFSET_Z"]
 
+        # 1. Calculate Hull Base Properties
         if lobe_number == 1:
-            return envelope.volume(), envelope.surface_area(), envelope.side_projected_area(), envelope.side_projected_area()
+            vol, surf, top, side = (envelope.volume(), envelope.surface_area(),
+                                    envelope.side_projected_area(), envelope.side_projected_area())
         elif lobe_number == 2:
-            return envelope.volume_bilobe(f), envelope.surface_area_bilobe(f), envelope.top_projected_area_bilobe(f), envelope.side_projected_area()
+            vol, surf, top, side = (envelope.volume_bilobe(f), envelope.surface_area_bilobe(f),
+                                    envelope.top_projected_area_bilobe(f), envelope.side_projected_area())
         else:
-            return envelope.volume_trilobe(e, f, g), envelope.surface_area_trilobe(e, f, g), envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g)
+            vol, surf, top, side = (envelope.volume_trilobe(e, f, g), envelope.surface_area_trilobe(e, f, g),
+                                    envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g))
+
+        # 2. Add Fin Contributions (if enabled)
+        if self.params.get("INCLUDE_FINS", True):
+            n_fins = self.params.get("FIN_NUMBER", 4)
+            rc = self.params.get("FIN_RC_LENGTH", 0)
+            h = self.params.get("FIN_HEIGHT", 0)
+            taper = self.params.get("FIN_TAPER_RATIO", 1)
+            thick_ratio = self.params.get("FIN_THICKNESS", 0) / 100.0
+
+            # Area of one side of one fin (Trapezoid)
+            fin_planform_area = 0.5 * (rc + rc * taper) * h
+
+            # Total Fin Surface Area (2 sides per fin)
+            surf += (2 * fin_planform_area * n_fins)
+
+            # Fin Volume Estimation (Approximate using planform area and thickness)
+            # Volume ~ Planform Area * Average Thickness
+            fin_vol = fin_planform_area * (rc * thick_ratio)
+            vol += (fin_vol * n_fins)
+
+            # Update Projected Areas (Simplified assumption for fins at 0, 90, 180, 270)
+            # Two fins add to top area, two fins add to side area
+            side += (fin_planform_area * 2)
+            top += (fin_planform_area * 2)
+
+        return vol, surf, top, side
 
 def plot_and_save_profile(params, length, nx, num_petals, nc, filename, shape_name="Airship_Geometry"):
     """Generates the DAT file and profile plot for the developed gore/petal."""
