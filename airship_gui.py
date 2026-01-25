@@ -706,10 +706,23 @@ class AirshipGUI(QMainWindow):
         main_tab_layout = QVBoxLayout(self.output_tab)
         main_tab_layout.addWidget(self.splitter)
 
-        geo_keys = ["l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME"]
+        # --- UPDATED SIGNAL CONNECTIONS FOR AUTO-UPDATE ---
+        # List of all input keys that affect the physical geometry
+        geo_keys = [
+            "l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME",           # Hull shape & size
+            "LOBE_OFFSET_X_SLIDER", "LOBE_OFFSET_Y_SLIDER", "LOBE_OFFSET_Z_SLIDER", # Multi-lobe offsets
+            "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS", "FIN_TAPER_RATIO",      # Fin dimensions
+            "FIN_NUMBER"                                                           # Fin count
+        ]
+
         for key in geo_keys:
             if key in self.inputs:
-                self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
+                # Use value_changed_by_user signal for LabeledSlider
+                if hasattr(self.inputs[key], 'value_changed_by_user'):
+                    self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
+
+        # Connect the Toggle and Dropdowns as well
+        self.inputs["INCLUDE_FINS"].toggled.connect(self._auto_update_props)
         self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
 
     def handle_output_action(self):
