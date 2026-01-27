@@ -652,8 +652,9 @@ class AirshipGUI(QMainWindow):
         prop_group = QGroupBox("Geometric Properties")
         prop_layout = QGridLayout(prop_group)
         self.prop_outputs = {}
-        labels = ["Vol (m³):", "Surf (m²):", "Top (m²):", "Side (m²):"]
-        keys = ["vol", "surf", "top_area", "side_area"]
+        # UPDATED: Added CV to labels and keys
+        labels = ["Vol (m³):", "Surf (m²):", "Top (m²):", "Side (m²):", "CV (x, y):"]
+        keys = ["vol", "surf", "top_area", "side_area", "cv"]
 
         for i, (lbl, key) in enumerate(zip(labels, keys)):
             prop_layout.addWidget(QLabel(lbl), i // 2, (i % 2) * 2)
@@ -707,21 +708,18 @@ class AirshipGUI(QMainWindow):
         main_tab_layout.addWidget(self.splitter)
 
         # --- UPDATED SIGNAL CONNECTIONS FOR AUTO-UPDATE ---
-        # List of all input keys that affect the physical geometry
         geo_keys = [
-            "l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME",           # Hull shape & size
-            "LOBE_OFFSET_X_SLIDER", "LOBE_OFFSET_Y_SLIDER", "LOBE_OFFSET_Z_SLIDER", # Multi-lobe offsets
-            "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS", "FIN_TAPER_RATIO",      # Fin dimensions
-            "FIN_NUMBER"                                                           # Fin count
+            "l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME",
+            "LOBE_OFFSET_X_SLIDER", "LOBE_OFFSET_Y_SLIDER", "LOBE_OFFSET_Z_SLIDER",
+            "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS", "FIN_TAPER_RATIO",
+            "FIN_NUMBER"
         ]
 
         for key in geo_keys:
             if key in self.inputs:
-                # Use value_changed_by_user signal for LabeledSlider
                 if hasattr(self.inputs[key], 'value_changed_by_user'):
                     self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
 
-        # Connect the Toggle and Dropdowns as well
         self.inputs["INCLUDE_FINS"].toggled.connect(self._auto_update_props)
         self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
 
@@ -848,11 +846,16 @@ class AirshipGUI(QMainWindow):
             try:
                 from geometry import AirshipGeometry
                 geom = AirshipGeometry(params, self.salome_path)
+                # Unpacking the five values: vol, surf, top, side, cv
                 vol, surf, top, side, cv = geom.geometric_properties()
+
                 self.prop_outputs["vol"].setText(f"{vol:.4f}")
                 self.prop_outputs["surf"].setText(f"{surf:.4f}")
                 self.prop_outputs["top_area"].setText(f"{top:.4f}")
                 self.prop_outputs["side_area"].setText(f"{side:.4f}")
+
+                # UPDATED: Format the CV coordinate pair
+                self.prop_outputs["cv"].setText(f"{cv[0]:.2f}, {cv[1]:.2f}")
             except Exception as e:
                 print(e)
                 pass
@@ -868,6 +871,9 @@ class AirshipGUI(QMainWindow):
             self.prop_outputs["surf"].setText(f"{surf:.4f}")
             self.prop_outputs["top_area"].setText(f"{top:.4f}")
             self.prop_outputs["side_area"].setText(f"{side:.4f}")
+
+            # UPDATED: Display CV
+            self.prop_outputs["cv"].setText(f"{cv[0]:.2f}, {cv[1]:.2f}")
         except Exception:
             pass
 
