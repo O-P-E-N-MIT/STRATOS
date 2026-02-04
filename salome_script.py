@@ -47,8 +47,8 @@ import importlib
 sys.path.append(DIRECTORY_PATH)
 
 # This is to reload the local modules once they are changed.
-import geometry_handler
-importlib.reload(geometry_handler)
+import new
+importlib.reload(new)
 
 # Inititating the Geometry Module of Salome.
 salome.salome_init()
@@ -74,7 +74,7 @@ print('[LOG] Generating hull Profile...')
 
 def create_envelope (params, length):
     print(f'[LOG] Generating envelope having Gertler parameters {params}...')
-    gertler = geometry_handler.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
+    gertler = new.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
     envelope_vertices = [geompy.MakeVertex(x, y, 0) for x, y in gertler.points(ENVELOPE_TRUNCATION_RATIO)]
 
     envelope_edges = [geompy.MakeInterpol(envelope_vertices, False, False), geompy.MakeLineTwoPnt(geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), 0, 0), O)]
@@ -117,7 +117,7 @@ if INCLUDE_FINS:
     rc_vertices = []
     tc_vertices = []
 
-    for x, y in geometry_handler.naca_airfoil_points(FIN_THICKNESS, FIN_SECTION_RESOLUTION, FIN_RC_LENGTH):
+    for x, y in new.naca_airfoil_points(FIN_THICKNESS, FIN_SECTION_RESOLUTION, FIN_RC_LENGTH):
         rc_vertices.append(geompy.MakeVertex(RC_AXIAL_OFFSET + x, y, RC_RADIAL_OFFSET))
         tc_vertices.append(geompy.MakeVertex(TC_AXIAL_OFFSET + x * FIN_TAPER_RATIO * COS_TIP_ANGLE, y * FIN_TAPER_RATIO, TC_RADIAL_OFFSET - x * FIN_TAPER_RATIO * SIN_TIP_ANGLE))
 

@@ -781,7 +781,7 @@ class AirshipGUI(QMainWindow):
                 )
 
                 # Sync the UI slider so the user sees the calculated length
-                self.inputs["ENVELOPE_LENGTH"].set_value(optimized_env.length)
+                # self.inputs["ENVELOPE_LENGTH"].set_value(optimized_env.length)
                 self.log.append(f"[INFO] Optimized Length: {optimized_env.length:.3f} m")
 
             # 4. Get performance arrays (Using the same 'ahull' instance)

@@ -40,48 +40,106 @@ STANDARD_ENVELOPES = {
 # A way to store the coefficients in the memory instead of computing it for the same parameters every time.
 GERTLER_COEFFICIENTS = {}
 
-class GertlerEnvelope:
+# A general Envelope object to extend it to multiple shapes.
+class Envelope:
 
-    # Input variables for Gertler Envelope
-    #
-    # coeffs = Coefficients of the Gertler polynomial
-    # length = Length of the envelope
-    # diameter = Maximum diameter of the envelope
-    # n = Number of points to be generated along the length
-    #
-    # NOTE: Coefficients for Gertler Enevelope is to be of the following form. 
-    # a1 * x + a2 * x^2 + a3 * x^3 + a4 * x^4 + a5 * x^5 + a6 * x^6
-    def __init__ (self, coeffs, length, diameter, n):
-        self.coeffs = list(coeffs)
+    # Initiating the basic envelope class.
+    def __init__(self, length, diameter, n):
         self.length = length
         self.diameter = diameter
         self.n = int(n)
 
-    # Get the radius of the envelope at a particular axial position x
-    def at (self, x):
-        x = x / self.length
-        y = self.diameter * max(self.coeffs[0]*x + self.coeffs[1]*x**2 + self.coeffs[2]*x**3 + self.coeffs[3]*x**4 + self.coeffs[4]*x**5 + self.coeffs[5]*x**6, 0)**0.5
-        return y
+    # Returns the coordinates of points on the envelope which intercepts the trailing edge of a fin and the necessary intercept offset.
+    def get_fin_intercept (self, x, rc):
+        chord_length = 0
+        h = self.length / self.n
+        y = self.at(x)
+
+        x1 = x
+        y1 = y
+        
+        X = []
+        Y = []
+
+        while chord_length < rc:
+            x1 += h
+            y1 = self.at(x1)
+
+            X.append(x1)
+            Y.append(y1)
+
+            chord_length = ((x-x1)**2 + (y-y1)**2)**0.5
+
+        # If the final chord length is smaller than the root chord, it means the axial offset is too high for a fin to be placed on the hull.
+        if chord_length < rc:
+            raise Exception("Envelope: Unable to find the trailing edge intercept for the given parameters.")
+        
+        X = np.asarray(X, dtype=float)
+        Y = np.asarray(Y, dtype=float)
+
+        # Points of the root chord of the fin
+        Y_RC = y + ((y1 - y)/(x1 - x)) * (X - x)
+        
+        # Finding the necessary offset for which the fin has to be brought closer to the axis so that the root chord
+        # completely intercepts with the envelope.
+        intercept_offset = np.max(Y_RC - Y)
+        
+        return x1, y1, intercept_offset
     
-    # Returns an array of points representing the Gertler envelope.
+    # Set the length of the envelope
+    def set_length (self, l):
+        self.diameter = l * self.diameter / self.length
+        self.length = l
+
+    # Sets the length of the envelope for the given volume.
     #
-    # NOTE: These points are not linearly scalable with length like NACA airfoils.
-    # NOTE: I have made use of numpy array here but an iterator function would be memory efficient I guess?
-    def points (self, truncation = 0, tuples = True):
-        X = np.linspace(0, 1 - truncation, self.n)
-        R = np.polyval(self.ordered_coeffs, X)
-        R[R < 0] = 0
+    # volume = Volume of the envelope
+    # lobe_number = Number of lobes 
+    # e, f, g = Multi lobe distances
+    #
+    # NOTE: The following code assumes all the lobes are of same shape and length.
+    def set_volume (self, volume, lobe_number=1, e=0, f=0, g=0):
+        # Calculation of length using V = pi * D^2 * L * cp/4 for a monolobe. In case of multilobe, the formula for volume is 
+        # complicated and scipy's fsolve is used to compute the required length for the given volume. 
+        # 
+        # For initial estimate of length of multi lobes, it is assumed there are no intersections between the lobe. This gives
+        # us a good initial estimate making it more faster for us to arrive at the actual value.
+        # 
+        # Volume = Number of lobes * pi * D^2 * L_estimate * cp/4
+        l2d = self.length / self.diameter
+        initial_length = ((4 * volume * l2d**2) / (np.pi * self.cp * lobe_number))**(1/3)
+        self.set_length(initial_length)
 
-        # In case if there is no truncation, the final point must lie on the axis.
-        if not truncation:
-            R[-1] = 0 
+        if lobe_number == 1:
+            # In case of monolobe, the initial length estimate is exactly the length of monolobe.
+            return self
+        
+        # Different function is used in different case of number of lobes here. If we were to put this if condition within one function, 
+        # it will be computationally inefficient.
+        elif lobe_number == 2:
+            # In case of bilobe design,
+            def func (l):
+                # Update the new length to the envelope.
+                self.set_length(l[0])
+                # New estimate of the volume from the new length.
+                volume_iter = self.volume_bilobe(f)
+                # Returns a factor indicating how much did the volume change with the new length.
+                # With this factor approaching 0, the length will approach the required length accordingly.
+                return (volume - volume_iter) / volume  
+        else:
+            # In case of trilobe design,
+            def func (l):
+                self.set_length(l[0])
+                volume_iter = self.volume_trilobe(e, f, g)
+                return (volume - volume_iter) / volume
+                
+        fsolve(func, initial_length)
+        return self
 
-        R = self.diameter * np.sqrt(R)
-        X = self.length * X
+    # Returns a copy of the envelope.
+    def copy (self):
+        return type(self)(self.coeffs, self.length, self.diameter, self.n)
 
-        # Zipping elements maybe a bad idea.
-        return zip(X, R) if tuples else (X, R)
-    
     # Returns petal coordinates
     def petal_coordinates (self, petal_number, nc = 150):
         delta_phi = 2 * np.pi / petal_number
@@ -92,8 +150,8 @@ class GertlerEnvelope:
     
     # Returns the volume of the envelope (mono lobe).
     def volume (self):
-        # pi x D^2 x L x cp/4
-        return np.pi * (self.diameter**2) * self.length * np.dot(self.coeffs, [1/2, 1/3, 1/4, 1/5, 1/6, 1/7])
+        X, R = self.points(tuples=False)
+        return np.trapezoid(np.pi * R**2, X)
     
     # Returns the surface area of the envelope (mono lobe).
     def surface_area (self):
@@ -223,56 +281,67 @@ class GertlerEnvelope:
         V = np.trapezoid(A, X)
         return np.trapezoid(X * A, X) / V, np.trapezoid(Y * A, X) / V
     
-    # Returns the coordinates of points on the envelope which intercepts the trailing edge of a fin and the necessary intercept offset.
-    def get_fin_intercept (self, x, rc):
-        chord_length = 0
-        h = self.length / self.n
-        y = self.at(x)
+    @classmethod
+    def from_parameters_volume (model, params, volume, n=100, lobe_number=1, e=0, f=0, g=0):
+        envelope = model.from_parameters(params, 1, n)
+        envelope.set_volume(volume, lobe_number, e, f, g)
+        return envelope
 
-        x1 = x
-        y1 = y
-        
-        X = []
-        Y = []
+class GertlerEnvelope(Envelope):
 
-        while chord_length < rc:
-            x1 += h
-            y1 = self.at(x1)
+    # Input variables for Gertler Envelope
+    #
+    # coeffs = Coefficients of the Gertler polynomial
+    # length = Length of the envelope
+    # diameter = Maximum diameter of the envelope
+    # n = Number of points to be generated along the length
+    #
+    # NOTE: Coefficients for Gertler Enevelope is to be of the following form. 
+    # a1 * x + a2 * x^2 + a3 * x^3 + a4 * x^4 + a5 * x^5 + a6 * x^6
+    def __init__ (self, coeffs, length, diameter, n):
+        self.coeffs = list(coeffs)
+        super().__init__(length, diameter, n)
 
-            X.append(x1)
-            Y.append(y1)
-
-            chord_length = ((x-x1)**2 + (y-y1)**2)**0.5
-
-        # If the final chord length is smaller than the root chord, it means the axial offset is too high for a fin to be placed on the hull.
-        if chord_length < rc:
-            raise Exception("GertlerEnvelope: Unable to find the trailing edge intercept for the given parameters.")
-        
-        X = np.asarray(X, dtype=float)
-        Y = np.asarray(Y, dtype=float)
-
-        # Points of the root chord of the fin
-        Y_RC = y + ((y1 - y)/(x1 - x)) * (X - x)
-        
-        # Finding the necessary offset for which the fin has to be brought closer to the axis so that the root chord
-        # completely intercepts with the envelope.
-        intercept_offset = np.max(Y_RC - Y)
-        
-        return x1, y1, intercept_offset
+    # Get the radius of the envelope at a particular axial position x
+    def at (self, x):
+        x = x / self.length
+        y = self.diameter * max(self.coeffs[0]*x + self.coeffs[1]*x**2 + self.coeffs[2]*x**3 + self.coeffs[3]*x**4 + self.coeffs[4]*x**5 + self.coeffs[5]*x**6, 0)**0.5
+        return y
     
-    # Set the length of the envelope
-    def set_length (self, l):
-        self.diameter = l * self.diameter / self.length
-        self.length = l
+    # Returns an array of points representing the Gertler envelope.
+    #
+    # NOTE: These points are not linearly scalable with length like NACA airfoils.
+    # NOTE: I have made use of numpy array here but an iterator function would be memory efficient I guess?
+    def points (self, truncation = 0, tuples = True):
+        X = np.linspace(0, 1 - truncation, self.n)
+        R = np.polyval(self.ordered_coeffs, X)
+        R[R < 0] = 0
 
-    # Returns a copy of the envelope.
-    def copy (self):
-        return GertlerEnvelope(self.coeffs, self.length, self.diameter, self.n)
+        # In case if there is no truncation, the final point must lie on the axis.
+        if not truncation:
+            R[-1] = 0 
+
+        R = self.diameter * np.sqrt(R)
+        X = self.length * X
+
+        # Zipping elements maybe a bad idea.
+        return zip(X, R) if tuples else (X, R)
+    
+    # Returns the volume of the envelope (mono lobe).
+    # Method overriden from general envelope by making use of the properties of Gertler Envelope.
+    def volume (self):
+        # pi x D^2 x L x cp/4
+        return np.pi * (self.diameter**2) * self.length * np.dot(self.coeffs, [1/2, 1/3, 1/4, 1/5, 1/6, 1/7])
 
     # Returns the coefficients in an ordered way numpy usually accepts.
     @property
     def ordered_coeffs (self):
         return self.coeffs[::-1] + [0]
+    
+    # Returns the prismatic coefficient of the envelope.
+    @property
+    def cp (self):
+        return np.dot(self.coeffs, [1/2, 1/3, 1/4, 1/5, 1/6, 1/7]) * 4
 
     # Returns the coefficients of the Gertler polynomial from standard parameters.
     def get_coefficients (params):
@@ -313,64 +382,42 @@ class GertlerEnvelope:
         diameter = length / params[4]
         return GertlerEnvelope(coeffs, length, diameter, n)
     
-    # Sets the length of the envelope for the given volume.
-    #
-    # volume = Volume of the envelope
-    # lobe_number = Number of lobes 
-    # e, f, g = Multi lobe distances
-    #
-    # NOTE: The following code assumes all the lobes are of same shape and length.
-    def set_volume (self, volume, lobe_number=1, e=0, f=0, g=0):
-        l2d = self.length / self.diameter
-        cp = np.dot(self.coeffs, [1/2, 1/3, 1/4, 1/5, 1/6, 1/7]) * 4
+class NACAEnvelope(Envelope):
 
-        # Calculation of length using V = pi * D^2 * L * cp/4 for a monolobe. In case of multilobe, the formula for volume is 
-        # complicated and scipy's fsolve is used to compute the required length for the given volume. 
-        # 
-        # For initial estimate of length of multi lobes, it is assumed there are no intersections between the lobe. This gives
-        # us a good initial estimate making it more faster for us to arrive at the actual value.
-        # 
-        # Volume = Number of lobes * pi * D^2 * L_estimate * cp/4
-        initial_length = ((4 * volume * l2d**2) / (np.pi * cp * lobe_number))**(1/3)
-        self.set_length(initial_length)
+    # Prismatic coefficient of a NACA envelope is constant irrespective of the parameters.
+    cp = 0.5477
 
-        if lobe_number == 1:
-            # In case of monolobe, the initial length estimate is exactly the length of monolobe.
-            return self
-        
-        # Different function is used in different case of number of lobes here. If we were to put this if condition within one function, 
-        # it will be computationally inefficient.
-        elif lobe_number == 2:
-            # In case of bilobe design,
-            def func (l):
-                # Update the new length to the envelope.
-                self.set_length(l[0])
-                # New estimate of the volume from the new length.
-                volume_iter = self.volume_bilobe(f)
-                # Returns a factor indicating how much did the volume change with the new length.
-                # With this factor approaching 0, the length will approach the required length accordingly.
-                return (volume - volume_iter) / volume  
-        else:
-            # In case of trilobe design,
-            def func (l):
-                self.set_length(l[0])
-                volume_iter = self.volume_trilobe(e, f, g)
-                return (volume - volume_iter) / volume
-                
-        fsolve(func, initial_length)
-        return self
+    def __init__(self, length, diameter, n):
+        super().__init__(length, diameter, n)
 
-    # Returns a GertlerEnvelope from standard parameters but with volume
+    def at (self, x):
+        x = x / self.length
+        y = 5 * self.diameter / self.length * (0.2969 * x**0.5 - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
+        return y
+    
+    # Returns an array of points representing the envelope.
+    def points (self, truncation = 0, tuples = True):
+        X = np.linspace(0, 1 - truncation, self.n)
+        R = 5 * self.diameter / self.length * (0.2969 * X**0.5 - 0.1260 * X - 0.3516 * X**2 + 0.2843 * X**3 - 0.1036 * X**4)
+        R[R < 0] = 0
+
+        # In case if there is no truncation, the final point must lie on the axis.
+        if not truncation:
+            R[-1] = 0 
+
+        X = self.length * X
+
+        # Zipping elements maybe a bad idea.
+        return zip(X, R) if tuples else (X, R)
+
+    # Returns a NACAEnvelope from the naca parameters.
     #
-    # params = (m1, r0, r1, cp, l2d)
-    # volume = Volume of the envelope
+    # params = (l2d)
+    # length = Length of the envelope
     # n = Number of points to be generated along the length
-    # lobe_number = Number of lobes 
-    # e, f, g = Multi lobe distances
-    def from_parameters_volume (params, volume, n=100, lobe_number=1, e=0, f=0, g=0):
-        envelope = GertlerEnvelope.from_parameters(params, 1, n)
-        envelope.set_volume(volume, lobe_number, e, f, g)
-        return envelope
+    def from_parameters (params, length, n=100):
+        diameter = length / params[0]
+        return NACAEnvelope(length, diameter, n)
 
 # Returns the half thickness of a symmetric NACA 4 digit airfoil.
 #
