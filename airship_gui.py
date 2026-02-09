@@ -58,19 +58,6 @@ class GenerationWorker(QObject):
         self.gore_model = gore_model
         self.compute_added_mass = compute_added_mass
 
-class GenerationWorker(QObject):
-    """Handles the heavy generation logic in a background thread."""
-    finished = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, mode_id, params, volume_val, gore_model, compute_added_mass=True):
-        super().__init__()
-        self.mode_id = mode_id
-        self.params = params
-        self.volume_val = volume_val
-        self.gore_model = gore_model
-        self.compute_added_mass = compute_added_mass
-
     def run(self):
         try:
             # Determine the file path for the primary STL output
@@ -301,14 +288,33 @@ class AirshipGUI(QMainWindow):
 
         self.hull_shape_box = QGroupBox("Hull Envelope Shape")
         cl = QGridLayout(self.hull_shape_box)
+
+        # FIX: Force equal column width so hiding widgets doesn't resize columns
+        cl.setColumnStretch(0, 1)
+        cl.setColumnStretch(1, 1)
+
+        # --- NEW: Envelope Series Selector ---
+        self.inputs["ENVELOPE_SERIES"] = QComboBox()
+        self.inputs["ENVELOPE_SERIES"].setObjectName("LargeDropdown")
+        self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA"])
+        self.inputs["ENVELOPE_SERIES"].setMinimumHeight(45) # Maintained large height
+        self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._update_series_visibility)
+
+        cl.addWidget(QLabel("Profile Series:"), 0, 0)
+        cl.addWidget(self.inputs["ENVELOPE_SERIES"], 0, 1, 1, 2) # Maintained 2-column span
+
+        # --- Existing Presets ---
         self.preset_combo = QComboBox()
         self.preset_combo.setObjectName("LargeDropdown")
         self.preset_combo.setMinimumHeight(45)
         self.preset_combo.addItems(list(STANDARD_ENVELOPES.keys()))
         self.preset_combo.currentIndexChanged.connect(self.load_preset)
-        cl.addWidget(QLabel("Shape Preset:"), 0, 0)
-        cl.addWidget(self.preset_combo, 0, 1, 1, 2)
 
+        self.preset_label = QLabel("Shape Preset:")
+        cl.addWidget(self.preset_label, 1, 0)
+        cl.addWidget(self.preset_combo, 1, 1, 1, 2)
+
+        # --- Parameters ---
         self.inputs["l2d"] = LabeledSlider("L/D Ratio", 1, 8, 3.266, 0.0001, 4)
         self.inputs["m1"] = LabeledSlider("m1", 0.3, 0.6, 0.419, 0.0001, 4)
         self.inputs["r0"] = LabeledSlider("r0", 0.01, 1, 0.337, 0.0001, 4)
@@ -316,12 +322,19 @@ class AirshipGUI(QMainWindow):
         self.inputs["cp"] = LabeledSlider("cp", 0.5, 0.8, 0.651, 0.0001, 4)
         self.inputs["ENVELOPE_RESOLUTION"] = LabeledSlider("Resolution", 50, 500, 150, 1, 0)
 
-        cl.addWidget(self.inputs["l2d"], 1, 0)
-        cl.addWidget(self.inputs["m1"], 1, 1)
-        cl.addWidget(self.inputs["r0"], 2, 0)
-        cl.addWidget(self.inputs["r1"], 2, 1)
-        cl.addWidget(self.inputs["cp"], 3, 0)
-        cl.addWidget(self.inputs["ENVELOPE_RESOLUTION"], 3, 1)
+        # REORDERED WIDGETS
+        # Row 2: L/D and m1
+        cl.addWidget(self.inputs["l2d"], 2, 0)
+        cl.addWidget(self.inputs["m1"], 2, 1)
+
+        # Row 3: Resolution (Below L/D) and r0
+        cl.addWidget(self.inputs["ENVELOPE_RESOLUTION"], 3, 0)
+        cl.addWidget(self.inputs["r0"], 3, 1)
+
+        # Row 4: r1 and cp
+        cl.addWidget(self.inputs["r1"], 4, 0)
+        cl.addWidget(self.inputs["cp"], 4, 1)
+
         layout.addWidget(self.hull_shape_box)
 
         self.balloon_params_box = QGroupBox("Balloon Geometry Parameters")
@@ -361,6 +374,22 @@ class AirshipGUI(QMainWindow):
         vl.addWidget(self.inputs["VOLUME"])
         layout.addWidget(self.volume_box)
         layout.addStretch()
+
+    def _update_series_visibility(self):
+        """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA)."""
+        is_naca = self.inputs["ENVELOPE_SERIES"].currentText() == "NACA"
+
+        # Hide Gertler specific inputs if NACA is selected
+        gertler_widgets = ["m1", "r0", "r1", "cp"]
+        for k in gertler_widgets:
+            self.inputs[k].setVisible(not is_naca)
+
+        # Hide Presets for NACA
+        self.preset_combo.setVisible(not is_naca)
+        self.preset_label.setVisible(not is_naca)
+
+        # Refresh auto-calculation in case values changed context
+        self._auto_update_props()
 
     def setup_aerostat_tab(self):
         self.aerostat_tab = QWidget()
@@ -721,6 +750,7 @@ class AirshipGUI(QMainWindow):
                     self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
 
         self.inputs["INCLUDE_FINS"].toggled.connect(self._auto_update_props)
+        self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._auto_update_props)
         self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
 
     def handle_output_action(self):
@@ -742,10 +772,17 @@ class AirshipGUI(QMainWindow):
             p = self.get_parameters(target_dir)
 
             from aerostat import AerostatHull
-            from geometry_handler import GertlerEnvelope
+            from geometry_handler import GertlerEnvelope, NACAEnvelope
 
             # 2. Initialize the Base Hull ONCE
-            resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
+            # Check Series
+            series = p.get("ENVELOPE_SERIES", "GERTLER")
+
+            if series == "NACA":
+                # NACA wrapper in geometry_handler expects (l2d, )
+                resolved_env = NACAEnvelope.from_parameters((p["l2d"],), p["ENVELOPE_LENGTH"])
+            else:
+                resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
 
             ahull = AerostatHull(
                 envelope=resolved_env,
@@ -810,6 +847,7 @@ class AirshipGUI(QMainWindow):
             print("\n" + "="*30)
             print(" FINAL CONSISTENT DESIGN PARAMETERS")
             print("="*30)
+            print(f"Profile Series:         {series}")
             print(f"Hull Max Radius:        {max_rad:.4f} m")
             print(f"Envelope Volume:        {vol:.4f} m³")
             print(f"Envelope Surface Area:  {surf_area:.4f} m²")
@@ -857,25 +895,8 @@ class AirshipGUI(QMainWindow):
                 # UPDATED: Format the CV coordinate pair
                 self.prop_outputs["cv"].setText(f"{cv[0]:.2f}, {cv[1]:.2f}")
             except Exception as e:
-                print(e)
+                # print(e)
                 pass
-
-    def _update_property_display(self, params):
-        """Directly updates the UI text fields with calculated geometric values."""
-        try:
-            from geometry import AirshipGeometry
-            geom = AirshipGeometry(params, self.salome_path)
-            vol, surf, top, side, cv = geom.geometric_properties()
-
-            self.prop_outputs["vol"].setText(f"{vol:.4f}")
-            self.prop_outputs["surf"].setText(f"{surf:.4f}")
-            self.prop_outputs["top_area"].setText(f"{top:.4f}")
-            self.prop_outputs["side_area"].setText(f"{side:.4f}")
-
-            # UPDATED: Display CV
-            self.prop_outputs["cv"].setText(f"{cv[0]:.2f}, {cv[1]:.2f}")
-        except Exception:
-            pass
 
     def _update_3d_view(self, stl_path):
         """Refreshes the 3D model in the plotter interactor."""
@@ -971,14 +992,29 @@ class AirshipGUI(QMainWindow):
         p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
         p["ENVELOPE_PARAMS"] = (p["m1"], p["r0"], p["r1"], p["cp"], p["l2d"])
 
+        # Capture Profile Series
+        p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
+
         # Handle Volumetric scaling for geometry definition
         if self.mode_button_group.checkedId() == 2:
-            from geometry_handler import GertlerEnvelope
-            temp_env = GertlerEnvelope.from_parameters_volume(
-                p["ENVELOPE_PARAMS"], self.inputs["VOLUME"].get_value(),
-                int(p["ENVELOPE_RESOLUTION"]), p["LOBE_NUMBER"],
-                p["LOBE_OFFSET_X"], p["LOBE_OFFSET_Y"], p["LOBE_OFFSET_Z"]
-            )
+            from geometry_handler import GertlerEnvelope, NACAEnvelope
+
+            if p["ENVELOPE_SERIES"] == "NACA":
+                # Create a temporary NACA envelope with unit length to scale it to volume
+                # NACAEnvelope.from_parameters expects tuple with l2d at index 0 (as per provided python wrapper)
+                temp_env = NACAEnvelope.from_parameters((p["l2d"],), 1, int(p["ENVELOPE_RESOLUTION"]))
+                temp_env.set_volume(
+                    self.inputs["VOLUME"].get_value(),
+                    p["LOBE_NUMBER"],
+                    p["LOBE_OFFSET_X"], p["LOBE_OFFSET_Y"], p["LOBE_OFFSET_Z"]
+                )
+            else:
+                temp_env = GertlerEnvelope.from_parameters_volume(
+                    p["ENVELOPE_PARAMS"], self.inputs["VOLUME"].get_value(),
+                    int(p["ENVELOPE_RESOLUTION"]), p["LOBE_NUMBER"],
+                    p["LOBE_OFFSET_X"], p["LOBE_OFFSET_Y"], p["LOBE_OFFSET_Z"]
+                )
+
             p["ENVELOPE_LENGTH"] = temp_env.length
             self.inputs["ENVELOPE_LENGTH"].set_value(temp_env.length)
 
@@ -1121,6 +1157,7 @@ class AirshipGUI(QMainWindow):
         current_mode_id = self.mode_button_group.checkedId()
         current_lobe_id = self.lobe_button_group.checkedId()
         current_shape_name = self.preset_combo.currentText()
+        current_series = self.inputs["ENVELOPE_SERIES"].currentText()
 
         # 2. BLOCK ALL UI SIGNALS TO PREVENT FREEZE
         for input_widget in self.inputs.values():
@@ -1206,8 +1243,10 @@ class AirshipGUI(QMainWindow):
             # Restore radio selections
             self.mode_button_group.button(current_mode_id).setChecked(True)
             self.lobe_button_group.button(current_lobe_id).setChecked(True)
+            self.inputs["ENVELOPE_SERIES"].setCurrentText(current_series)
 
             self.refresh_tabs()
+            self._update_series_visibility() # Ensure correct slider state based on series
             self._auto_update_props()
             self.log.append(f"Status: Reset successful for {current_shape_name}.")
 
@@ -1256,4 +1295,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = AirshipGUI()
     ex.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec())    
