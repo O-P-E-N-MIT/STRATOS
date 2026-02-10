@@ -315,11 +315,11 @@ class AirshipGUI(QMainWindow):
         cl.addWidget(self.preset_combo, 1, 1, 1, 2)
 
         # --- Parameters ---
-        self.inputs["l2d"] = LabeledSlider("L/D Ratio", 1, 8, 3.266, 0.0001, 4)
-        self.inputs["m1"] = LabeledSlider("m1", 0.3, 0.6, 0.419, 0.0001, 4)
-        self.inputs["r0"] = LabeledSlider("r0", 0.01, 1, 0.337, 0.0001, 4)
-        self.inputs["r1"] = LabeledSlider("r1", 0.01, 1, 0.251, 0.0001, 4)
-        self.inputs["cp"] = LabeledSlider("cp", 0.5, 0.8, 0.651, 0.0001, 4)
+        self.inputs["l2d"] = LabeledSlider("Length/Diameter Ratio (L/D)", 1, 8, 3.266, 0.0001, 4)
+        self.inputs["m1"] = LabeledSlider("Max. Thickness Position (m1)", 0.3, 0.6, 0.419, 0.0001, 4)
+        self.inputs["r0"] = LabeledSlider("Nose Radius (r0)", 0.01, 1, 0.337, 0.0001, 4)
+        self.inputs["r1"] = LabeledSlider("Stern Radius (r1)", 0.01, 1, 0.251, 0.0001, 4)
+        self.inputs["cp"] = LabeledSlider("Prismatic Coefficient (cp)", 0.5, 0.8, 0.651, 0.0001, 4)
         self.inputs["ENVELOPE_RESOLUTION"] = LabeledSlider("Resolution", 50, 500, 150, 1, 0)
 
         # REORDERED WIDGETS
