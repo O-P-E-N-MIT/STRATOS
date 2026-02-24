@@ -19,39 +19,23 @@ BALLONET_SHAPE_FACTOR = {
     "THREE_QUARTER": 3
 }
 
-# def get_atmospheric_properties(z):
-#     # Geopotential height from geometric height
-#     h = (R * z) / (R + z)
-
-#     # Gradient layer
-#     if h < 11000:
-#         T = T0 - L*h
-#         P = P0 * (T/T0)**(9.80665/(R*L))
-
-#     # Isothermal layer
-#     else:
-#         T = 216.65
-#         P = 22632 * math.exp(-9.80665*(h-11000)/(R*T))
-
-#     return P, T
-
+# TODO: Right now, there is only support for ISA model only till the Tropopause.
 def get_atmospheric_properties(z):
     z = np.asarray(z)
     h = (RE * z) / (RE + z)
 
-    # initialise outputs
     T = np.empty_like(h, dtype=float)
     P = np.empty_like(h, dtype=float)
 
-    # masks
+    # Masks
     grad = h < 11000
     iso  = ~grad
 
-    # gradient region
+    # Gradient region
     T[grad] = T0 - L*h[grad]
     P[grad] = P0 * (T[grad]/T0)**(ag/(R*L))
 
-    # isothermal region
+    # Isothermal region
     T[iso] = 216.65
     P[iso] = 22632 * np.exp(-ag*(h[iso]-11000)/(R*216.65))
 
@@ -90,12 +74,22 @@ def get_net_lift (
     # Net static lift
     return Lg - (rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume + total_mass) * ag
 
+def get_thermal_modal (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
+    h_conv = 10.45 - wind_speed + 10.0 * np.sqrt(wind_speed)
+    q_solar = solar_flux * absorptivity
+    q_ir = emissivity * 5.67e-8 * (T_amb ** 4)
+    T_env = T_amb + (q_solar - q_ir) / max(h_conv, 1e-3)
+    
+    return T_env
+
+# Main class to perform all calculations for the Aerostat.
 class AerostatHull:
 
     def __init__(
             self,
             envelope,                       # The envelope to be modelled as Aerostat.
             skin_density,                   # Density of the skin of the hull (kg/m^2).
+            skin_thickness,                 # Thickness of the envelope skin.
             additional_mass,                # Additional mass of the envelope.
             operational_height,             # Operational altitude of the envelope.
             deployment_height,              # Deployment altitude of the envelope.
@@ -119,6 +113,17 @@ class AerostatHull:
             ballonet_fabric_density=0.35,   # Ballonet fabric density (kg/m^2).
             tether_density=0,               # Density of the tether used (kg/m).
             tether_fraction=1,              # Fraction of tether weight carried.
+            cte=2.3e-5, 
+            max_temp=323.15, 
+            min_temp=233.15,
+            base_strength=75.0,             # Base strength of envelope (MPa)
+            temp_derating=0.15,
+            fatigue_factor=0.995, 
+            uv_degradation=0.02,
+            solar_flux=1000, 
+            emissivity=0.8, 
+            absorptivity=0.3, 
+            wind_speed=5
     ):
         P_dep, T_dep = get_atmospheric_properties(deployment_height)
         P_op,  T_op  = get_atmospheric_properties(operational_height)
@@ -129,6 +134,7 @@ class AerostatHull:
             self.inflation_fraction_deploy = 1
             self.inflation_fraction_factor = UnitMultiplier()
             self.has_ballonets = False
+
         # If there are ballonets, the necessary inflation fraction calculations are to be done.
         else:
             self.inflation_fraction_oper = inflation_fraction_oper
@@ -148,6 +154,15 @@ class AerostatHull:
         self.skin_density = skin_density
         self.additional_mass = additional_mass
         self.has_ballonets = ballonet_number != 0
+
+        self.cte = cte
+        self.base_strength = base_strength
+        self.temp_derating = temp_derating
+        self.skin_thickness = skin_thickness
+        self.solar_flux = solar_flux 
+        self.emissivity = 0.8
+        self.absorptivity = 0.3 
+        self.wind_speed = 5
 
         # Tether weight per unit meter.
         self.tether_density = tether_density * tether_fraction
@@ -245,7 +260,7 @@ class AerostatHull:
         total_mass = (self.skin_density * surface_area +
                       self.additional_mass +
                       self.fin_mass +
-                      current_tether_mass + # Conditionally applied tether weight
+                      current_tether_mass +                         # Conditionally applied tether weight
                       self.ballonet_fabric_mass * volume**(2/3))
 
         # Total ballonet volume varying with altitude
@@ -260,7 +275,56 @@ class AerostatHull:
         # Net static lift calculation
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
-        return h, Ln, Lg, I, BV
+        # Temperature of the envelope.
+        T_env = get_thermal_modal(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
+
+        # Total stress acting on the envelope skin due to both thermal and pressure effects (in MPa).
+        sigma = (
+            self.cte * (T_env - T) * self.base_strength         # Thermal stress on the envelope
+            + delta_P * R / (2 * self.skin_thickness) * 1e-6    # Hoop stress from the pressure difference
+        )
+
+        # Temperature derating on material strength.
+        derating = np.full_like(T_env, 1)
+        derating_mask = T_env > 293.15
+        derating[derating_mask] = np.maximum(0, 1 - (T_env[derating_mask] - 293.15) * self.temp_derating / 100)
+        sigma *= derating
+
+        return h, Ln, Lg, I, BV, sigma
+    
+    # This function calculates the burst altitude beyond the maximum operational altitude to find the factor of safety.
+    # NOTE: Given the atmosphere is limited upto 20km, the burst altitude cannot be calculate beyond that.
+    def get_burst_altitude (self, safety_factor=2):
+        allowable_stress = self.base_strength / safety_factor
+        hoop_stress_factor = self.envelope.diameter / (4 * self.skin_thickness)
+
+        def func (h):
+            _, T = get_atmospheric_properties(h)
+            T_env = get_thermal_modal(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
+
+            # Thermal stress
+            thermal_strain = self.cte * (T_env - T) 
+            thermal_stress = thermal_strain * self.base_strength
+
+            # Hoop stress from pressure difference (thin shell, approximate spherical/prolate).
+            sigma_pa = self.delta_P * hoop_stress_factor
+            pressure_stress = sigma_pa * 1e-6
+
+            # Total stress acting on the envelope skin due to both thermal and pressure effects.
+            total_stress = thermal_stress + pressure_stress
+
+            # Temperature derating on material strength.
+            if T_env > 293.15:
+                total_stress *= max(0, 1 - (T_env - 293.15) * self.temp_derating / 100)
+
+            return allowable_stress - total_stress
+
+        try:
+            h_burst = minimize_scalar(func, bounds=[0, 20000], method='bounded', options={'xatol': 1e-8})
+            return h_burst.x
+        # If the burst altitude is beyond 20km, it returns 20km as the burst altitude.
+        except ValueError:
+            return 20000
     
 # A unique number which when multiplied by anything will end up giving 1.
 class UnitMultiplier:
@@ -277,6 +341,7 @@ class UnitMultiplier:
 # aerostat = AerostatHull(
 #         GertlerEnvelope.from_parameters(STANDARD_ENVELOPES["NPL"], 1),
 #         additional_mass=150+70,
+#         skin_thickness=1e-3,
 #         skin_density=.75,
 #         operational_height=4500,
 #         deployment_height=0,
@@ -295,3 +360,19 @@ class UnitMultiplier:
 # envv, conv = aerostat.initialise_from_operational_altitude([0, 50000])
 # print(aerostat.get_properties())
 # print(f"Aerostat length: {envv.length} {conv}")
+
+# print(f"Burst Altitude: {aerostat.get_burst_altitude()}")
+
+# h, Ln, Lg, I, BV, total_stress = aerostat.get_properties()
+
+# import matplotlib.pyplot as plt
+
+# # Plot
+# plt.plot(h, total_stress)
+# plt.title("Total Stress")
+# plt.xlabel("Altitude")
+# plt.ylabel("Total Stress")
+# plt.grid(True)
+
+# # Show graph
+# plt.show()
