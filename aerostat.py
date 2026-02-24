@@ -280,8 +280,8 @@ class AerostatHull:
 
         # Total stress acting on the envelope skin due to both thermal and pressure effects (in MPa).
         sigma = (
-            self.cte * (T_env - T) * self.base_strength         # Thermal stress on the envelope
-            + delta_P * R / (2 * self.skin_thickness) * 1e-6    # Hoop stress from the pressure difference
+            self.cte * (T_env - T) * self.base_strength                             # Thermal stress on the envelope
+            + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   # Hoop stress from the pressure difference
         )
 
         # Temperature derating on material strength.
