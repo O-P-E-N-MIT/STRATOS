@@ -263,7 +263,8 @@ class AirshipGUI(QMainWindow):
             QGroupBox::title { subcontrol-origin: margin; color: #00BFFF; padding: 0 5px; }
             QLineEdit, QTextEdit, QTableWidget { background-color: #3C3C3C; border: 1px solid #3c3c3c; color: #D4D4D4; }
             QHeaderView::section { background-color: #2D2D2D; color: #00BFFF; padding: 4px; border: 1px solid #3c3c3c; font-weight: bold; }
-            QComboBox#LargeDropdown { background-color: #3C3C3C; border: 2px solid #00BFFF; padding: 8px; border-radius: 4px; font-size: 11pt; font-weight: bold; color: #FFFFFF; }
+            QComboBox { background-color: #3C3C3C; border: 1px solid #00BFFF; padding: 5px; border-radius: 4px; color: #FFFFFF; }
+            QComboBox#LargeDropdown { border: 2px solid #00BFFF; padding: 8px; border-radius: 4px; font-size: 11pt; font-weight: bold; }
             QPushButton { background-color: #3C3C3C; border: 1px solid #3c3c3c; padding: 8px; border-radius: 4px; color: #D4D4D4; }
             QPushButton:hover { background-color: #505050; border: 1px solid #00BFFF; }
             QPushButton:disabled { background-color: #2a2a2a; color: #555555; border: 1px solid #2a2a2a; }
@@ -447,6 +448,7 @@ class AirshipGUI(QMainWindow):
         ml = QGridLayout(mass_grp)
         self.inputs["SKIN_DENSITY"] = LabeledSlider("Skin Density (kg/m²)", 0.1, 2.0, 0.75, 0.01, 2)
         self.inputs["PAYLOAD_MASS"] = LabeledSlider("Payload/Add. Mass (kg)", 0, 5000, 220, 1, 1)
+        self.inputs["SKIN_THICKNESS"] = LabeledSlider("Skin Thick. (mm)", 0.1, 5.0, 1.0, 0.1, 2)
 
         # Tether Mass Controls
         self.inputs["INCLUDE_TETHER"] = QCheckBox("INCLUDE TETHER MASS")
@@ -465,11 +467,39 @@ class AirshipGUI(QMainWindow):
         ml.addWidget(self.inputs["SKIN_DENSITY"], 0, 0)
         ml.addWidget(self.inputs["PAYLOAD_MASS"], 0, 1)
         ml.addWidget(self.inputs["INCLUDE_TETHER"], 1, 0)
+        ml.addWidget(self.inputs["SKIN_THICKNESS"], 1, 1)
         ml.addWidget(self.inputs["TETHER_DENSITY"], 2, 0)
         ml.addWidget(self.inputs["TETHER_FRACTION"], 2, 1)
         ml.addWidget(self.inputs["TARGET_NET_LIFT"], 3, 0)
         ml.addWidget(self.inputs["OPTIMIZE_LENGTH"], 4, 0, 1, 2)
         layout.addWidget(mass_grp)
+
+        # 5. Thermal & Stress Analysis Inputs
+        thermal_grp = QGroupBox("Thermal & Stress Analysis")
+        tl = QGridLayout(thermal_grp)
+        self.inputs["MATERIAL_CLASS"] = QComboBox()
+        self.inputs["MATERIAL_CLASS"].addItems(["Standard", "High temperature", "Cold temperature", "Extreme environment"])
+
+        self.inputs["SAFETY_FACTOR"] = LabeledSlider("Safety Factor", 1.0, 10.0, 4.0, 0.1, 1)
+        self.inputs["SOLAR_FLUX"] = LabeledSlider("Solar Flux (W/m²)", 0, 2000, 1000, 10, 0)
+        self.inputs["WIND_SPEED"] = LabeledSlider("Wind Speed (m/s)", 0, 50, 5, 1, 0)
+        self.inputs["EMISSIVITY"] = LabeledSlider("Emissivity", 0.0, 1.0, 0.8, 0.01, 2)
+        self.inputs["ABSORPTIVITY"] = LabeledSlider("Absorptivity", 0.0, 1.0, 0.3, 0.01, 2)
+
+        # --- NEW UI ELEMENTS ---
+        self.inputs["FATIGUE_FACTOR"] = LabeledSlider("Fatigue Factor/Yr", 0.8, 1.0, 0.995, 0.001, 3)
+        self.inputs["UV_DEGRADATION"] = LabeledSlider("UV Degrade/Yr", 0.0, 0.2, 0.02, 0.001, 3)
+
+        tl.addWidget(QLabel("Envelope Material:"), 0, 0)
+        tl.addWidget(self.inputs["MATERIAL_CLASS"], 0, 1)
+        tl.addWidget(self.inputs["SAFETY_FACTOR"], 1, 0)
+        tl.addWidget(self.inputs["SOLAR_FLUX"], 1, 1)
+        tl.addWidget(self.inputs["WIND_SPEED"], 2, 0)
+        tl.addWidget(self.inputs["EMISSIVITY"], 2, 1)
+        tl.addWidget(self.inputs["ABSORPTIVITY"], 3, 0)
+        tl.addWidget(self.inputs["FATIGUE_FACTOR"], 3, 1) # Added to grid
+        tl.addWidget(self.inputs["UV_DEGRADATION"], 4, 0) # Added to grid
+        layout.addWidget(thermal_grp)
 
         layout.addStretch()
 
@@ -602,10 +632,12 @@ class AirshipGUI(QMainWindow):
         fin_sweep_layout = QGridLayout(fin_sweep_group)
         self.inputs["FIN_SWEEP_ANGLE"] = LabeledSlider("Sweep Angle (Deg)", 0.0, 45.0, 0.0, 0.0001, 4)
         self.inputs["FIN_TIP_ANGLE"] = LabeledSlider("Tip Angle (Deg)", 0.0, 30.0, 15.0, 0.0001, 4)
+        self.inputs["FIN_DENSITY"] = LabeledSlider("Fin Density (kg/m³)", 1.0, 50.0, 10.0, 0.1, 1)
         self.inputs["FIN_NUMBER"] = LabeledSlider("N Fins", 2, 8, 4, 1, decimals=0)
 
         fin_sweep_layout.addWidget(self.inputs["FIN_SWEEP_ANGLE"], 0, 0)
         fin_sweep_layout.addWidget(self.inputs["FIN_TIP_ANGLE"], 0, 1)
+        fin_sweep_layout.addWidget(self.inputs["FIN_DENSITY"], 0, 2)
         fin_sweep_layout.addWidget(QLabel("Number of Fins:"), 1, 0)
         fin_sweep_layout.addWidget(self.inputs["FIN_NUMBER"], 1, 1)
         fin_sweep_layout.addWidget(QLabel("Angular Positions:"), 2, 0)
@@ -767,26 +799,31 @@ class AirshipGUI(QMainWindow):
         """
         self.log.append("[PROCESS] Running Analytical Aerostat Solver...")
         try:
-            # 1. Gather raw parameters from UI
             target_dir = self.current_session_folder
             p = self.get_parameters(target_dir)
 
-            from aerostat import AerostatHull
+            from aerostat import AerostatHull, get_atmospheric_properties, get_thermal_modal
             from geometry_handler import GertlerEnvelope, NACAEnvelope
 
-            # 2. Initialize the Base Hull ONCE
-            # Check Series
             series = p.get("ENVELOPE_SERIES", "GERTLER")
-
             if series == "NACA":
-                # NACA wrapper in geometry_handler expects (l2d, )
                 resolved_env = NACAEnvelope.from_parameters((p["l2d"],), p["ENVELOPE_LENGTH"])
             else:
                 resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
 
+            # Map UI Material dropdown to physical properties natively
+            MATERIAL_PROPS = {
+                "Standard": {"cte": 2.3e-5, "base_strength": 75.0, "temp_derating": 0.15},
+                "High temperature": {"cte": 1.5e-5, "base_strength": 90.0, "temp_derating": 0.05},
+                "Cold temperature": {"cte": 3.0e-5, "base_strength": 60.0, "temp_derating": 0.20},
+                "Extreme environment": {"cte": 1.0e-5, "base_strength": 120.0, "temp_derating": 0.01}
+            }
+            mat = MATERIAL_PROPS[p["MATERIAL_CLASS"]]
+
             ahull = AerostatHull(
                 envelope=resolved_env,
                 skin_density=p["SKIN_DENSITY"],
+                skin_thickness=p.get("SKIN_THICKNESS", 1.0) / 1000.0, # Convert mm to m
                 additional_mass=p["PAYLOAD_MASS"],
                 operational_height=p["OPERATIONAL_HEIGHT"],
                 deployment_height=0,
@@ -807,24 +844,29 @@ class AirshipGUI(QMainWindow):
                 fin_height=p.get("FIN_HEIGHT", 0),
                 fin_taper_ratio=p.get("FIN_TAPER_RATIO", 1),
                 fin_thickness=p.get("FIN_THICKNESS", 0),
-                fin_number=p.get("FIN_NUMBER", 4)
+                fin_number=p.get("FIN_NUMBER", 4),
+                fin_density=p.get("FIN_DENSITY", 10.0),
+                cte=mat["cte"],
+                base_strength=mat["base_strength"],
+                temp_derating=mat["temp_derating"],
+                solar_flux=p["SOLAR_FLUX"],
+                emissivity=p["EMISSIVITY"],
+                absorptivity=p["ABSORPTIVITY"],
+                wind_speed=p["WIND_SPEED"]
             )
 
-            # 3. Handle Optimization (If Checked)
             if self.inputs.get("OPTIMIZE_LENGTH") and self.inputs["OPTIMIZE_LENGTH"].isChecked():
                 target_lift = p.get("TARGET_NET_LIFT", 0)
                 optimized_env, convergence_error = ahull.initialise_from_operational_altitude(
                     [1.0, 1e10], target_lift=target_lift
                 )
-
-                # Sync the UI slider so the user sees the calculated length
-                # self.inputs["ENVELOPE_LENGTH"].set_value(optimized_env.length)
                 self.log.append(f"[INFO] Optimized Length: {optimized_env.length:.3f} m")
 
-            # 4. Get performance arrays (Using the same 'ahull' instance)
-            h, Ln, Lg, I, BV = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+            burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
 
-            # 5. RESTORED DESIGN PARAMETER STATUS MESSAGES
+            # 4. Get performance arrays
+            h, Ln, Lg, I, BV, sigma = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+
             operational_index = (np.abs(h - ahull.operational_altitude)).argmin()
 
             vol = ahull.envelope.volume()
@@ -834,16 +876,19 @@ class AirshipGUI(QMainWindow):
             ballonet_fabric_mass = ahull.ballonet_fabric_mass * (vol ** (2/3))
             tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
 
-            # Calculate Gas Mass at Op Alt
-            P_op, T_op = h[operational_index], I[operational_index]
-            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_op + p["DELTA_T"]))) * I[operational_index] * vol
+            # Calculate actual ambient and envelope temperatures
+            P_op, T_amb = get_atmospheric_properties(ahull.operational_altitude)
+            T_env = get_thermal_modal(T_amb, p["SOLAR_FLUX"], p["ABSORPTIVITY"], p["EMISSIVITY"], p["WIND_SPEED"])
 
-            # Ballonet Radius (Equivalent sphere)
+            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_amb + p["DELTA_T"]))) * I[operational_index] * vol
+
             v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
             ballonet_radius = (3 * v_per_ballonet / (4 * np.pi)) ** (1/3)
 
-            # Log results to the Console
+            op_stress = sigma[operational_index]
+            allowable_stress = mat["base_strength"] / p["SAFETY_FACTOR"]
+
             print("\n" + "="*30)
             print(" FINAL CONSISTENT DESIGN PARAMETERS")
             print("="*30)
@@ -862,15 +907,31 @@ class AirshipGUI(QMainWindow):
             print("-" * 30)
             print(f"Op Inflation Fraction:  {I[operational_index]*100:.2f} %")
             print(f"Dep Inflation Fraction: {ahull.inflation_fraction_deploy*100:.2f} %")
+            print("-" * 30)
+            print("--- STRESS & THERMAL ANALYSIS ---")
+            print(f"Material Selected:      {p['MATERIAL_CLASS']}")
+            print(f"Envelope Temp:          {T_env-273.15:.2f} °C")
+            print(f"Ambient Temp:           {T_amb-273.15:.2f} °C")
+            print(f"Total Combined Stress:  {op_stress:.2f} MPa")
+            print(f"Allowable Stress:       {allowable_stress:.2f} MPa")
+            print(f"Estimated Burst Alt:    {burst_alt:.0f} m")
             print("="*30 + "\n")
 
-            # 6. Update GUI Plots and Cache Data
-            self.last_aero_data = (h, Ln, Lg, I, BV)
-            self.update_aero_plots(h, Ln, Lg, I, BV)
+            # --- INDEPENDENT MATERIAL LIFESPAN CALCULATION ---
+            # Projecting strength decay over 10 years based on fatigue and UV
+            t_years = np.linspace(0, 10, len(h))
+            lifespan_strength = mat["base_strength"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
+
+            # Store the expanded data and update 6-panel plots
+            self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength)
+            self.update_aero_plots(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength)
+
             self.log.append(f"[SUCCESS] Design parameters calculated for {ahull.envelope.length:.3f}m hull.")
 
         except Exception as e:
             self.log.append(f"[ERROR] Aerostat solver failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _auto_update_props(self):
         """Refreshes geometric property labels based on current slider states."""
@@ -946,12 +1007,16 @@ class AirshipGUI(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export Performance Data", "", "CSV Files (*.csv)")
         if path:
             import csv
-            h, Ln, Lg, I, BV = self.last_aero_data
+            h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength = self.last_aero_data
             try:
                 with open(path, 'w', newline='') as f:
                     writer = csv.writer(f)
-                    writer.writerow(["Alt (m)", "Net Lift (N)", "Gross Lift (N)", "Inflation (%)", "Ballonet (m3)"])
-                    for row in zip(h, Ln, Lg, I, BV):
+                    writer.writerow([
+                        "Altitude (m)", "Net Lift (N)", "Gross Lift (N)",
+                        "Inflation (%)", "Ballonet (m3)", "Stress (MPa)",
+                        "Time (Years)", "Lifespan Strength (MPa)"
+                    ])
+                    for row in zip(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength):
                         writer.writerow(row)
                 self.log.append(f"[SUCCESS] Exported to: {path}")
             except Exception as e:
@@ -968,18 +1033,21 @@ class AirshipGUI(QMainWindow):
             "ENVELOPE_LENGTH", "ENVELOPE_RESOLUTION", "m1", "r0", "r1", "cp", "l2d",
             "FIN_AXIAL_OFFSET", "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS",
             "FIN_TAPER_RATIO", "FIN_SWEEP_ANGLE", "FIN_TIP_ANGLE", "FIN_NUMBER",
-            "FIN_SECTION_RESOLUTION", "THETA_RES", "PHI_RES", "ASPECT_RATIO",
+            "FIN_SECTION_RESOLUTION", "FIN_DENSITY", "THETA_RES", "PHI_RES", "ASPECT_RATIO",
             "BULGE_AMPLITUDE", "BULGE_POWER", "GORE_AMPLITUDE", "GORE_FADE_POWER",
             "OPERATIONAL_HEIGHT", "RELATIVE_HUMIDITY", "GAS_PURITY", "GAS_CONSTANT",
-            "DELTA_P", "DELTA_T", "SKIN_DENSITY", "PAYLOAD_MASS", "TARGET_NET_LIFT",
+            "DELTA_P", "DELTA_T", "SKIN_DENSITY", "SKIN_THICKNESS", "PAYLOAD_MASS", "TARGET_NET_LIFT",
             "TETHER_DENSITY", "TETHER_FRACTION", "BALLONET_NUMBER",
-            "BALLONET_FABRIC_DENSITY", "MARGIN_HEIGHT"
+            "BALLONET_FABRIC_DENSITY", "MARGIN_HEIGHT", "SAFETY_FACTOR",
+            "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
+            "FATIGUE_FACTOR", "UV_DEGRADATION"
         ]
 
         for key in all_keys:
             if key in self.inputs:
                 p[key] = self.inputs[key].get_value()
 
+        p["MATERIAL_CLASS"] = self.inputs["MATERIAL_CLASS"].currentText()
         p["INCLUDE_TETHER"] = self.inputs["INCLUDE_TETHER"].isChecked()
         p["BALLONET_SHAPE"] = self.inputs["BALLONET_SHAPE"].currentText()
         p["N_PETALS"] = self.inputs["N_PETALS"].get_value()
@@ -1076,19 +1144,25 @@ class AirshipGUI(QMainWindow):
 
         self.thread.start()
 
-    def update_aero_plots(self, h, Ln, Lg, I, BV):
-        """Updates the performance graphs with native dark mode styling."""
+    def update_aero_plots(self, h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength):
+        """Updates the performance graphs using a 2x3 grid."""
         self.fig.clear()
 
-        titles = ["Net Static Lift (N)", "Gross Static Lift (N)", "Inflation Fraction (%)", "Ballonet Volume (m³)"]
-        datasets = [Ln, Lg, I * 100, BV]
-        colors = ['#00BFFF', '#00FF00', '#FF4500', '#DA70D6']
+        # Bundle data for dynamic plotting: (x_data, y_data, Title, X-Label, Color)
+        datasets = [
+            (h, Ln, "Net Static Lift (N)", "Altitude (m)", "#00BFFF"),
+            (h, Lg, "Gross Static Lift (N)", "Altitude (m)", "#00FF00"),
+            (h, I * 100, "Inflation Fraction (%)", "Altitude (m)", "#FF4500"),
+            (h, BV, "Ballonet Volume (m³)", "Altitude (m)", "#DA70D6"),
+            (h, sigma, "Total Envelope Stress (MPa)", "Altitude (m)", "#FFD700"),
+            (t_years, lifespan_strength, "Material Lifespan (MPa)", "Time (Years)", "#FF6347")
+        ]
 
-        for i in range(4):
-            ax = self.fig.add_subplot(2, 2, i + 1)
-            ax.plot(h, datasets[i], color=colors[i], linewidth=1.5)
-            ax.set_title(titles[i], color='#00BFFF', fontsize=10, fontweight='bold')
-            ax.set_xlabel("Altitude (m)", color='white', fontsize=8)
+        for i, (x, y, title, xlabel, color) in enumerate(datasets):
+            ax = self.fig.add_subplot(2, 3, i + 1)
+            ax.plot(x, y, color=color, linewidth=1.5)
+            ax.set_title(title, color='#00BFFF', fontsize=10, fontweight='bold')
+            ax.set_xlabel(xlabel, color='white', fontsize=8)
             ax.tick_params(colors='white', labelsize=8)
             ax.grid(True, alpha=0.1, linestyle='--')
             ax.set_facecolor('#1e1e1e')
@@ -1195,9 +1269,10 @@ class AirshipGUI(QMainWindow):
                 "FIN_TAPER_RATIO": 0.55,
                 "FIN_AXIAL_OFFSET": 80.0,
                 "FIN_SECTION_RESOLUTION": 60,
-                "FIN_SWEEP_ANGLE": 0.0,      # Explicitly reset sweep
-                "FIN_TIP_ANGLE": 15.0,       # Explicitly reset tip angle
-                "FIN_NUMBER": 4              # Explicitly reset number of fins
+                "FIN_SWEEP_ANGLE": 0.0,
+                "FIN_TIP_ANGLE": 15.0,
+                "FIN_NUMBER": 4,
+                "FIN_DENSITY": 10.0
             }
             for key, val in fin_defaults.items():
                 if key in self.inputs:
@@ -1207,15 +1282,20 @@ class AirshipGUI(QMainWindow):
             self.inputs["FIN_THETA_POS_TEXT"].setText("0.0, 90.0, 180.0, 270.0")
             self.inputs["INCLUDE_FINS"].setChecked(True)
 
-            # 6. Reset Aerostat and Multilobe Sliders
+            # 6. Reset Aerostat, Thermal, and Multilobe Sliders
             aero_defaults = {
                 "OPERATIONAL_HEIGHT": 4500.0, "RELATIVE_HUMIDITY": 0.7, "MARGIN_HEIGHT": 500.0,
                 "GAS_PURITY": 0.97, "GAS_CONSTANT": 2077.0, "DELTA_P": 500.0, "DELTA_T": 5.0,
                 "BALLONET_NUMBER": 2, "BALLONET_FABRIC_DENSITY": 0.35, "SKIN_DENSITY": 0.75,
-                "PAYLOAD_MASS": 220.0, "TETHER_DENSITY": 0.1, "TETHER_FRACTION": 1.0, "TARGET_NET_LIFT": 0.0
+                "SKIN_THICKNESS": 1.0, "PAYLOAD_MASS": 220.0, "TETHER_DENSITY": 0.1,
+                "TETHER_FRACTION": 1.0, "TARGET_NET_LIFT": 0.0, "SAFETY_FACTOR": 4.0,
+                "SOLAR_FLUX": 1000.0, "WIND_SPEED": 5.0, "EMISSIVITY": 0.8, "ABSORPTIVITY": 0.3,
+                "FATIGUE_FACTOR": 0.995, "UV_DEGRADATION": 0.02
             }
             for key, val in aero_defaults.items():
                 if key in self.inputs: self.inputs[key].set_value(val)
+
+            self.inputs["MATERIAL_CLASS"].setCurrentIndex(0)
 
             lobe_offsets = {
                 "LOBE_OFFSET_X_SLIDER": 10.0, "LOBE_OFFSET_Y_SLIDER": 10.0, "LOBE_OFFSET_Z_SLIDER": 10.0,
