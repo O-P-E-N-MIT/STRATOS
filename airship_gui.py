@@ -262,6 +262,7 @@ class AirshipGUI(QMainWindow):
             QGroupBox { border: 1px solid #3c3c3c; margin-top: 15px; font-weight: bold; }
             QGroupBox::title { subcontrol-origin: margin; color: #00BFFF; padding: 0 5px; }
             QLineEdit, QTextEdit, QTableWidget { background-color: #3C3C3C; border: 1px solid #3c3c3c; color: #D4D4D4; }
+            QTextEdit { font-family: Cascadia Code; }
             QHeaderView::section { background-color: #2D2D2D; color: #00BFFF; padding: 4px; border: 1px solid #3c3c3c; font-weight: bold; }
             QComboBox { background-color: #3C3C3C; border: 1px solid #00BFFF; padding: 5px; border-radius: 4px; color: #FFFFFF; }
             QComboBox#LargeDropdown { border: 2px solid #00BFFF; padding: 8px; border-radius: 4px; font-size: 11pt; font-weight: bold; }
@@ -797,12 +798,12 @@ class AirshipGUI(QMainWindow):
         Performs analytical performance calculations by initializing the AerostatHull
         once and handling optimization and property retrieval in a single pass.
         """
-        self.log.append("[PROCESS] Running Analytical Aerostat Solver...")
+        self.log.append("\n[PROCESS] Running Analytical Aerostat Solver...")
         try:
             target_dir = self.current_session_folder
             p = self.get_parameters(target_dir)
 
-            from aerostat import AerostatHull, get_atmospheric_properties, get_thermal_modal
+            from aerostat import AerostatHull, get_atmospheric_properties, get_thermal_model, get_gas_mass
             from geometry_handler import GertlerEnvelope, NACAEnvelope
 
             series = p.get("ENVELOPE_SERIES", "GERTLER")
@@ -857,30 +858,25 @@ class AirshipGUI(QMainWindow):
 
             if self.inputs.get("OPTIMIZE_LENGTH") and self.inputs["OPTIMIZE_LENGTH"].isChecked():
                 target_lift = p.get("TARGET_NET_LIFT", 0)
-                optimized_env, convergence_error = ahull.initialise_from_operational_altitude(
-                    [1.0, 1e10], target_lift=target_lift
-                )
-                self.log.append(f"[INFO] Optimized Length: {optimized_env.length:.3f} m")
+                optimized_env, convergence_error = ahull.initialise_from_operational_altitude([1.0, 1e10], target_lift=target_lift)
+                self.log.append(f"[INFO] Optimized Length: {optimized_env.length:.3f} m\n")
 
             burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
 
             # 4. Get performance arrays
-            h, Ln, Lg, I, BV, sigma = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+            h, Ln, Lg, I, BV, sigma, vol, surf_area = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
 
-            operational_index = (np.abs(h - ahull.operational_altitude)).argmin()
+            operational_index = np.searchsorted(h, ahull.operational_altitude)
 
-            vol = ahull.envelope.volume()
-            surf_area = ahull.envelope.surface_area()
-            max_rad = ahull.envelope.diameter / 2.0
+            P_op, T_op = get_atmospheric_properties(ahull.operational_altitude)
+            T_env = get_thermal_model(T_op, p["SOLAR_FLUX"], p["ABSORPTIVITY"], p["EMISSIVITY"], p["WIND_SPEED"])
+
+            max_rad = ahull.envelope.diameter / 2
             env_mass = surf_area * ahull.skin_density
             ballonet_fabric_mass = ahull.ballonet_fabric_mass * (vol ** (2/3))
             tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
-
-            # Calculate actual ambient and envelope temperatures
-            P_op, T_amb = get_atmospheric_properties(ahull.operational_altitude)
-            T_env = get_thermal_modal(T_amb, p["SOLAR_FLUX"], p["ABSORPTIVITY"], p["EMISSIVITY"], p["WIND_SPEED"])
-
-            gas_mass_op = (p["GAS_PURITY"] * (P_op + p["DELTA_P"]) / (p["GAS_CONSTANT"] * (T_amb + p["DELTA_T"]))) * I[operational_index] * vol
+            gas_mass_op = get_gas_mass(P_op, T_op, vol, *ahull.gas_properties)
+            total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.additional_mass + gas_mass_op
 
             v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
@@ -888,34 +884,40 @@ class AirshipGUI(QMainWindow):
 
             op_stress = sigma[operational_index]
             allowable_stress = mat["base_strength"] / p["SAFETY_FACTOR"]
+            safety_factor = mat["base_strength"] / np.max(sigma)
 
-            print("\n" + "="*30)
-            print(" FINAL CONSISTENT DESIGN PARAMETERS")
-            print("="*30)
-            print(f"Profile Series:         {series}")
-            print(f"Hull Max Radius:        {max_rad:.4f} m")
-            print(f"Envelope Volume:        {vol:.4f} m³")
-            print(f"Envelope Surface Area:  {surf_area:.4f} m²")
-            print(f"Envelope Mass:          {env_mass:.4f} kg")
-            print("-" * 30)
-            print(f"Ballonet Volume (Op):   {v_ballonet_total:.4f} m³")
-            print(f"Ballonet Radius (Eff):  {ballonet_radius:.4f} m")
-            print(f"Ballonet Fabric Mass:   {ballonet_fabric_mass:.4f} kg")
-            print("-" * 30)
-            print(f"Lifting Gas Mass (Op):  {gas_mass_op:.4f} kg")
-            print(f"Tether Mass @Op Alt:    {tether_mass_op:.4f} kg")
-            print("-" * 30)
-            print(f"Op Inflation Fraction:  {I[operational_index]*100:.2f} %")
-            print(f"Dep Inflation Fraction: {ahull.inflation_fraction_deploy*100:.2f} %")
-            print("-" * 30)
-            print("--- STRESS & THERMAL ANALYSIS ---")
-            print(f"Material Selected:      {p['MATERIAL_CLASS']}")
-            print(f"Envelope Temp:          {T_env-273.15:.2f} °C")
-            print(f"Ambient Temp:           {T_amb-273.15:.2f} °C")
-            print(f"Total Combined Stress:  {op_stress:.2f} MPa")
-            print(f"Allowable Stress:       {allowable_stress:.2f} MPa")
-            print(f"Estimated Burst Alt:    {burst_alt:.0f} m")
-            print("="*30 + "\n")
+            print("  ")
+            print("================ DESIGN PARAMETERS ===============")
+
+            print(f"Profile Series:                     {series}")
+            print(f"Hull Max Radius:                    {max_rad:.4f} m")
+            print(f"Envelope Volume:                    {vol:.4f} m³")
+            print(f"Envelope Surface Area:              {surf_area:.4f} m²\n")
+            print("-" * 50)
+
+            print(f"Ballonet Volume @ Op. Alt.:         {v_ballonet_total:.4f} m³")
+            print(f"Ballonet Fabric Mass:               {ballonet_fabric_mass:.4f} kg\n")
+            print(f"Effective Ballonet Radius:          {ballonet_radius:.4f} m")
+            print("-" * 50)
+
+            print(f"Envelope Fabric Mass:               {env_mass:.4f} kg")
+            print(f"Fin mass:                           {ahull.fin_mass:.4f} kg")
+            print(f"Gas mass @ Op. Alt.:                {gas_mass_op:.4f} kg")
+            print(f"Tether mass @ Op. Alt.:             {tether_mass_op:.4f} kg")
+            print(f"Total mass @ Op. Alt.:              {total_mass_op:.4f} kg\n")
+            print("-" * 50)
+
+            print(f"Inflation Fraction @ Op. Alt.:      {I[operational_index]*100:.2f} %")
+            print(f"Inflation Fraction @ Dep. Alt.:     {ahull.inflation_fraction_deploy*100:.2f} %\n")
+
+            print("------------ STRESS & THERMAL ANALYSIS -----------")
+            # print(f"Material Selected:                {p['MATERIAL_CLASS']}")
+            print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
+            print(f"Estimated Burst Altitude:           {burst_alt:.2f} m")
+            print(f"Total Combined Stress:              {op_stress:.2f} MPa")
+            print(f"Allowable Stress:                   {allowable_stress:.2f} MPa")
+            print(f"Safety Factor:                      {safety_factor:.2f}")
+            print("="*50 + "\n")
 
             # --- INDEPENDENT MATERIAL LIFESPAN CALCULATION ---
             # Projecting strength decay over 10 years based on fatigue and UV
@@ -924,7 +926,7 @@ class AirshipGUI(QMainWindow):
 
             # Store the expanded data and update 6-panel plots
             self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength)
-            self.update_aero_plots(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength)
+            self.update_aero_plots(*self.last_aero_data)
 
             self.log.append(f"[SUCCESS] Design parameters calculated for {ahull.envelope.length:.3f}m hull.")
 

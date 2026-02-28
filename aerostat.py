@@ -74,7 +74,24 @@ def get_net_lift (
     # Net static lift
     return Lg - (rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume + total_mass) * ag
 
-def get_thermal_modal (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
+def get_gas_mass (
+        P, T,
+        volume,                     # Volume of the envelope.
+        RH,                         # Relative Humidity (0-1).   
+        purity,                     # Purity of lifting gas.
+        delta_P,                    # Increment in lifting gas pressure.
+        delta_T,                    # Increment in lifting gas temperature.
+        gas_constant,               # Gas constant for the gas filled in the aerostat.
+        inflation_fraction_factor   # Inflation Fraction factor.
+):
+    rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
+    rho_ba = P/(287*T)
+    inflation_fraction = inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
+
+    # Returns the lifting gas mass and the ballonet mass
+    return rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume
+
+def get_thermal_model (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
     h_conv = 10.45 - wind_speed + 10.0 * np.sqrt(wind_speed)
     q_solar = solar_flux * absorptivity
     q_ir = emissivity * 5.67e-8 * (T_amb ** 4)
@@ -160,9 +177,9 @@ class AerostatHull:
         self.temp_derating = temp_derating
         self.skin_thickness = skin_thickness
         self.solar_flux = solar_flux 
-        self.emissivity = 0.8
-        self.absorptivity = 0.3 
-        self.wind_speed = 5
+        self.emissivity = emissivity
+        self.absorptivity = absorptivity
+        self.wind_speed = wind_speed
 
         # Tether weight per unit meter.
         self.tether_density = tether_density * tether_fraction
@@ -257,11 +274,14 @@ class AerostatHull:
         # Calculate tether mass only if included by the user
         current_tether_mass = (self.tether_density * h) if include_tether else 0
 
+        # Ballonet mass in the envelope.
+        ballonet_mass = self.ballonet_fabric_mass * volume**(2/3)
+
         total_mass = (self.skin_density * surface_area +
                       self.additional_mass +
                       self.fin_mass +
-                      current_tether_mass +                         # Conditionally applied tether weight
-                      self.ballonet_fabric_mass * volume**(2/3))
+                      current_tether_mass +                 # Conditionally applied tether weight
+                      ballonet_mass)
 
         # Total ballonet volume varying with altitude
         BV = (1 - I) * volume
@@ -276,7 +296,7 @@ class AerostatHull:
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
         # Temperature of the envelope.
-        T_env = get_thermal_modal(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
+        T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
 
         # Total stress acting on the envelope skin due to both thermal and pressure effects (in MPa).
         sigma = (
@@ -290,7 +310,7 @@ class AerostatHull:
         derating[derating_mask] = np.maximum(0, 1 - (T_env[derating_mask] - 293.15) * self.temp_derating / 100)
         sigma *= derating
 
-        return h, Ln, Lg, I, BV, sigma
+        return h, Ln, Lg, I, BV, sigma, volume, surface_area
     
     # This function calculates the burst altitude beyond the maximum operational altitude to find the factor of safety.
     # NOTE: Given the atmosphere is limited upto 20km, the burst altitude cannot be calculate beyond that.
@@ -300,7 +320,7 @@ class AerostatHull:
 
         def func (h):
             _, T = get_atmospheric_properties(h)
-            T_env = get_thermal_modal(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
+            T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
 
             # Thermal stress
             thermal_strain = self.cte * (T_env - T) 
