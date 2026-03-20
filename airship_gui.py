@@ -180,12 +180,20 @@ class AirshipGUI(QMainWindow):
         self.primary_input_tab = QWidget()
         self.fairings_tab = QWidget()
         self.fin_tab = QWidget()
+
+        # --- NEW: Initialize the wing tab container ---
+        self.wing_tab = QWidget()
+
         self.output_tab = QWidget()
 
         self.setup_primary_tab_layout()
         self.setup_aerostat_tab()
         self.setup_fairings_tab()
         self.setup_fin_tab()
+
+        # --- NEW: Build the wing tab UI ---
+        self.setup_wing_tab()
+
         self.setup_output_tab()
 
         self.main_layout.addWidget(self.tab_widget)
@@ -375,7 +383,52 @@ class AirshipGUI(QMainWindow):
         self.inputs["VOLUME"] = LabeledSlider("Volume (m³)", 0, 1000000, 5000, 0.1, 4)
         vl.addWidget(self.inputs["VOLUME"])
         layout.addWidget(self.volume_box)
+        # --- NEW: Appendages Box for Wing Toggle ---
+        self.appendages_box = QGroupBox("Hull Appendages")
+        al = QVBoxLayout(self.appendages_box)
+
+        self.inputs["INCLUDE_WINGS"] = QCheckBox("GENERATE WING WITH HULL")
+        self.inputs["INCLUDE_WINGS"].setChecked(False) # Default to False so the tab is hidden initially
+        self.inputs["INCLUDE_WINGS"].setFont(QFont("Arial", 10, QFont.Bold))
+        self.inputs["INCLUDE_WINGS"].setStyleSheet("color: #00BFFF;")
+
+        # Connect to refresh_tabs to dynamically add/remove the wing tab
+        self.inputs["INCLUDE_WINGS"].toggled.connect(self.refresh_tabs)
+        self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
+
+        al.addWidget(self.inputs["INCLUDE_WINGS"])
+        layout.addWidget(self.appendages_box)
+
         layout.addStretch()
+
+    def setup_wing_tab(self):
+        main_layout = QVBoxLayout(self.wing_tab)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+
+        wing_dim_group = QGroupBox("Wing Parameters")
+        w_layout = QGridLayout(wing_dim_group)
+        self.inputs["WING_SPAN"] = LabeledSlider("Span (m)", 5.0, 100.0, 20.0, 0.1, 2)
+        self.inputs["WING_ROOT_CHORD"] = LabeledSlider("Root Chord (Cr)", 1.0, 20.0, 5.0, 0.1, 2)
+        self.inputs["WING_TIP_CHORD"] = LabeledSlider("Tip Chord (Ct)", 0.1, 20.0, 2.0, 0.1, 2)
+        self.inputs["WING_SWEEP"] = LabeledSlider("Sweep (Deg)", 0.0, 45.0, 15.0, 0.1, 2)
+        self.inputs["WING_DIHEDRAL"] = LabeledSlider("Dihedral (Deg)", -10.0, 30.0, 5.0, 0.1, 2)
+        self.inputs["WING_TWIST_ROOT"] = LabeledSlider("Root Twist (Deg)", -10.0, 15.0, 2.0, 0.1, 2)
+        self.inputs["WING_TWIST_TIP"] = LabeledSlider("Tip Twist (Deg)", -10.0, 15.0, -2.0, 0.1, 2)
+        self.inputs["WING_THICKNESS"] = LabeledSlider("Thickness (%)", 5.0, 25.0, 12.0, 0.1, 2)
+        self.inputs["WING_AXIAL_OFFSET"] = LabeledSlider("Axial Pos (m)", 0.0, 200.0, 40.0, 0.1, 2)
+
+        w_layout.addWidget(self.inputs["WING_SPAN"], 0, 0)
+        w_layout.addWidget(self.inputs["WING_ROOT_CHORD"], 0, 1)
+        w_layout.addWidget(self.inputs["WING_TIP_CHORD"], 0, 2)
+        w_layout.addWidget(self.inputs["WING_SWEEP"], 1, 0)
+        w_layout.addWidget(self.inputs["WING_DIHEDRAL"], 1, 1)
+        w_layout.addWidget(self.inputs["WING_THICKNESS"], 1, 2)
+        w_layout.addWidget(self.inputs["WING_TWIST_ROOT"], 2, 0)
+        w_layout.addWidget(self.inputs["WING_TWIST_TIP"], 2, 1)
+        w_layout.addWidget(self.inputs["WING_AXIAL_OFFSET"], 2, 2)
+
+        main_layout.addWidget(wing_dim_group)
+        main_layout.addStretch(1)
 
     def _update_series_visibility(self):
         """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA)."""
@@ -523,43 +576,18 @@ class AirshipGUI(QMainWindow):
         is_aero = (mode_id == 4)
         is_multi = self.lobe_button_group.checkedId() > 1 and not is_balloon
 
+        # --- NEW: Check if wings are enabled ---
+        is_winged = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked() and not is_balloon
+
         # Toggle Input group visibility
         self.hull_shape_box.setHidden(is_balloon)
         self.balloon_params_box.setHidden(not is_balloon)
         self.hull_config_group.setHidden(is_balloon)
         self.length_box.setHidden(not is_standard)
         self.volume_box.setHidden(not (is_vol or is_balloon))
+        self.appendages_box.setHidden(is_balloon) # Hide the wing toggle in balloon mode
 
-        # Handle Output Tab UI rearrangement
-        if is_aero:
-            self.btn_run.setText("CALCULATE PERFORMANCE")
-            self.btn_run.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
-            self.btn_plot.hide()
-            self.btn_csv.show()
-
-            # Hide Added Mass and Export Format controls in Aerostat mode
-            self.inputs["COMPUTE_ADDED_MASS"].hide()
-            # To hide the radio buttons, we hide the layout container they live in
-            for i in range(self.format_button_group.buttons().__len__()):
-                self.format_button_group.button(i).hide()
-
-            self.matrix_group.hide()
-            self.preview_group.hide()
-            self.aero_analysis_group.show()
-        else:
-            self.btn_run.setText("RUN GENERATION")
-            self.btn_run.setStyleSheet("background-color: #007ACC; color: white;")
-            self.btn_plot.show()
-            self.btn_csv.hide()
-
-            # Show Added Mass and Export Format controls in other modes
-            self.inputs["COMPUTE_ADDED_MASS"].show()
-            for i in range(self.format_button_group.buttons().__len__()):
-                self.format_button_group.button(i).show()
-
-            self.matrix_group.show()
-            self.preview_group.show()
-            self.aero_analysis_group.hide()
+        # ... (keep the existing output tab logic for aero vs standard modes) ...
 
         # Update available tabs
         curr = self.tab_widget.currentIndex()
@@ -572,6 +600,10 @@ class AirshipGUI(QMainWindow):
             self.tab_widget.addTab(self.fairings_tab, "Multi-Lobe Configuration")
         if not is_balloon:
             self.tab_widget.addTab(self.fin_tab, "Fin Design")
+
+        # --- NEW: Conditionally add the wing tab ---
+        if is_winged:
+            self.tab_widget.addTab(self.wing_tab, "Wing Design")
 
         self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1))
@@ -774,7 +806,10 @@ class AirshipGUI(QMainWindow):
             "l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME",
             "LOBE_OFFSET_X_SLIDER", "LOBE_OFFSET_Y_SLIDER", "LOBE_OFFSET_Z_SLIDER",
             "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS", "FIN_TAPER_RATIO",
-            "FIN_NUMBER"
+            "FIN_NUMBER",
+            # --- NEW: ALL Wing Keys Included ---
+            "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_THICKNESS",
+            "WING_SWEEP", "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP"
         ]
 
         for key in geo_keys:
@@ -783,6 +818,10 @@ class AirshipGUI(QMainWindow):
                     self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
 
         self.inputs["INCLUDE_FINS"].toggled.connect(self._auto_update_props)
+        # --- NEW: Connect Wing Toggle ---
+        if "INCLUDE_WINGS" in self.inputs:
+            self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
+
         self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._auto_update_props)
         self.preset_combo.currentIndexChanged.connect(self._auto_update_props)
 
@@ -847,6 +886,16 @@ class AirshipGUI(QMainWindow):
                 fin_thickness=p.get("FIN_THICKNESS", 0),
                 fin_number=p.get("FIN_NUMBER", 4),
                 fin_density=p.get("FIN_DENSITY", 10.0),
+
+                # --- NEW: Wing Parameters ---
+                has_wings=p.get("INCLUDE_WINGS", False),
+                wing_span=p.get("WING_SPAN", 0),
+                wing_root_chord=p.get("WING_ROOT_CHORD", 0),
+                wing_tip_chord=p.get("WING_TIP_CHORD", 0),
+                wing_thickness=p.get("WING_THICKNESS", 0),
+                wing_density=p.get("FIN_DENSITY", 10.0), # Reuses fin density for structural consistency
+                # ----------------------------
+
                 cte=mat["cte"],
                 base_strength=mat["base_strength"],
                 temp_derating=mat["temp_derating"],
@@ -876,7 +925,9 @@ class AirshipGUI(QMainWindow):
             ballonet_fabric_mass = ahull.ballonet_fabric_mass * (vol ** (2/3))
             tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
             gas_mass_op = get_gas_mass(P_op, T_op, vol, *ahull.gas_properties)
-            total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.additional_mass + gas_mass_op
+
+            # --- UPDATED Total Mass Calculation ---
+            total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.wing_mass + ahull.additional_mass + gas_mass_op
 
             v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
@@ -902,6 +953,10 @@ class AirshipGUI(QMainWindow):
 
             print(f"Envelope Fabric Mass:               {env_mass:.4f} kg")
             print(f"Fin mass:                           {ahull.fin_mass:.4f} kg")
+
+            if p.get("INCLUDE_WINGS", False):
+                print(f"Wing mass:                          {ahull.wing_mass:.4f} kg")
+
             print(f"Gas mass @ Op. Alt.:                {gas_mass_op:.4f} kg")
             print(f"Tether mass @ Op. Alt.:             {tether_mass_op:.4f} kg")
             print(f"Total mass @ Op. Alt.:              {total_mass_op:.4f} kg\n")
@@ -1042,7 +1097,11 @@ class AirshipGUI(QMainWindow):
             "TETHER_DENSITY", "TETHER_FRACTION", "BALLONET_NUMBER",
             "BALLONET_FABRIC_DENSITY", "MARGIN_HEIGHT", "SAFETY_FACTOR",
             "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
-            "FATIGUE_FACTOR", "UV_DEGRADATION"
+            "FATIGUE_FACTOR", "UV_DEGRADATION",
+            # --- NEW: ADDED WING KEYS HERE ---
+            "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
+            "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
+            "WING_THICKNESS", "WING_AXIAL_OFFSET"
         ]
 
         for key in all_keys:
@@ -1062,6 +1121,12 @@ class AirshipGUI(QMainWindow):
         p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
         p["ENVELOPE_PARAMS"] = (p["m1"], p["r0"], p["r1"], p["cp"], p["l2d"])
 
+        # --- NEW: CAPTURE WING TOGGLE ---
+        if "INCLUDE_WINGS" in self.inputs:
+            p["INCLUDE_WINGS"] = self.inputs["INCLUDE_WINGS"].isChecked()
+        else:
+            p["INCLUDE_WINGS"] = False
+
         # Capture Profile Series
         p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
 
@@ -1070,8 +1135,6 @@ class AirshipGUI(QMainWindow):
             from geometry_handler import GertlerEnvelope, NACAEnvelope
 
             if p["ENVELOPE_SERIES"] == "NACA":
-                # Create a temporary NACA envelope with unit length to scale it to volume
-                # NACAEnvelope.from_parameters expects tuple with l2d at index 0 (as per provided python wrapper)
                 temp_env = NACAEnvelope.from_parameters((p["l2d"],), 1, int(p["ENVELOPE_RESOLUTION"]))
                 temp_env.set_volume(
                     self.inputs["VOLUME"].get_value(),
@@ -1229,108 +1292,124 @@ class AirshipGUI(QMainWindow):
         """
         from geometry_handler import STANDARD_ENVELOPES
 
-        # 1. Capture current state to preserve radio buttons and dropdowns
-        current_mode_id = self.mode_button_group.checkedId()
-        current_lobe_id = self.lobe_button_group.checkedId()
-        current_shape_name = self.preset_combo.currentText()
-        current_series = self.inputs["ENVELOPE_SERIES"].currentText()
+        current_tab = self.tab_widget.currentWidget()
 
-        # 2. BLOCK ALL UI SIGNALS TO PREVENT FREEZE
+        # BLOCK ALL UI SIGNALS TO PREVENT FREEZE
         for input_widget in self.inputs.values():
             if hasattr(input_widget, 'blockSignals'):
                 input_widget.blockSignals(True)
 
         try:
-            # 3. Reset sliders to defaults of the CURRENTLY selected shape
-            shape_vals = STANDARD_ENVELOPES.get(current_shape_name, STANDARD_ENVELOPES["NPL"])
-            keys = ["m1", "r0", "r1", "cp", "l2d"]
-            for k, v in zip(keys, shape_vals):
-                if k in self.inputs:
-                    self.inputs[k].set_value(v)
+            if current_tab == self.primary_input_tab:
+                # Capture current state to preserve dropdowns
+                current_shape_name = self.preset_combo.currentText()
 
-            # Basic Geometry Defaults
-            self.inputs["ENVELOPE_LENGTH"].set_value(100.0)
-            self.inputs["VOLUME"].set_value(5000.0)
-            self.inputs["ENVELOPE_RESOLUTION"].set_value(150)
-            self.inputs["N_PETALS"].set_value(8)
+                # Reset sliders to defaults of the CURRENTLY selected shape
+                shape_vals = STANDARD_ENVELOPES.get(current_shape_name, STANDARD_ENVELOPES["NPL"])
+                keys = ["m1", "r0", "r1", "cp", "l2d"]
+                for k, v in zip(keys, shape_vals):
+                    if k in self.inputs:
+                        self.inputs[k].set_value(v)
 
-            # 4. RESET SUPER PRESSURE BALLOON TAB
-            balloon_defaults = {
-                "ASPECT_RATIO": 1.0, "GORE_AMPLITUDE": 0.05, "GORE_FADE_POWER": 4.0,
-                "BULGE_AMPLITUDE": 0.0, "BULGE_POWER": 1.0, "THETA_RES": 400, "PHI_RES": 600
-            }
-            for key, val in balloon_defaults.items():
-                if key in self.inputs:
-                    self.inputs[key].set_value(val)
+                # Basic Geometry Defaults
+                self.inputs["ENVELOPE_LENGTH"].set_value(100.0)
+                self.inputs["VOLUME"].set_value(5000.0)
+                self.inputs["ENVELOPE_RESOLUTION"].set_value(150)
 
-            # 5. RESET FIN DESIGN TAB (Dimensions & Sweep Configuration)
-            fin_defaults = {
-                "FIN_RC_LENGTH": 15.5,
-                "FIN_HEIGHT": 15.5,
-                "FIN_THICKNESS": 10.0,
-                "FIN_TAPER_RATIO": 0.55,
-                "FIN_AXIAL_OFFSET": 80.0,
-                "FIN_SECTION_RESOLUTION": 60,
-                "FIN_SWEEP_ANGLE": 0.0,
-                "FIN_TIP_ANGLE": 15.0,
-                "FIN_NUMBER": 4,
-                "FIN_DENSITY": 10.0
-            }
-            for key, val in fin_defaults.items():
-                if key in self.inputs:
-                    self.inputs[key].set_value(val)
+                # Balloon & Wing Toggles
+                if "INCLUDE_WINGS" in self.inputs:
+                    self.inputs["INCLUDE_WINGS"].setChecked(False)
 
-            # Reset Fin Angular Positions and Checkbox
-            self.inputs["FIN_THETA_POS_TEXT"].setText("0.0, 90.0, 180.0, 270.0")
-            self.inputs["INCLUDE_FINS"].setChecked(True)
+                # RESET SUPER PRESSURE BALLOON
+                balloon_defaults = {
+                    "ASPECT_RATIO": 1.0, "GORE_AMPLITUDE": 0.05, "GORE_FADE_POWER": 4.0,
+                    "BULGE_AMPLITUDE": 0.0, "BULGE_POWER": 1.0, "THETA_RES": 400, "PHI_RES": 600
+                }
+                for key, val in balloon_defaults.items():
+                    if key in self.inputs:
+                        self.inputs[key].set_value(val)
 
-            # 6. Reset Aerostat, Thermal, and Multilobe Sliders
-            aero_defaults = {
-                "OPERATIONAL_HEIGHT": 4500.0, "RELATIVE_HUMIDITY": 0.7, "MARGIN_HEIGHT": 500.0,
-                "GAS_PURITY": 0.97, "GAS_CONSTANT": 2077.0, "DELTA_P": 500.0, "DELTA_T": 5.0,
-                "BALLONET_NUMBER": 2, "BALLONET_FABRIC_DENSITY": 0.35, "SKIN_DENSITY": 0.75,
-                "SKIN_THICKNESS": 1.0, "PAYLOAD_MASS": 220.0, "TETHER_DENSITY": 0.1,
-                "TETHER_FRACTION": 1.0, "TARGET_NET_LIFT": 0.0, "SAFETY_FACTOR": 4.0,
-                "SOLAR_FLUX": 1000.0, "WIND_SPEED": 5.0, "EMISSIVITY": 0.8, "ABSORPTIVITY": 0.3,
-                "FATIGUE_FACTOR": 0.995, "UV_DEGRADATION": 0.02
-            }
-            for key, val in aero_defaults.items():
-                if key in self.inputs: self.inputs[key].set_value(val)
+            elif hasattr(self, 'aerostat_tab') and current_tab == self.aerostat_tab:
+                aero_defaults = {
+                    "OPERATIONAL_HEIGHT": 4500.0, "RELATIVE_HUMIDITY": 0.7, "MARGIN_HEIGHT": 500.0,
+                    "GAS_PURITY": 0.97, "GAS_CONSTANT": 2077.0, "DELTA_P": 500.0, "DELTA_T": 5.0,
+                    "BALLONET_NUMBER": 2, "BALLONET_FABRIC_DENSITY": 0.35, "SKIN_DENSITY": 0.75,
+                    "SKIN_THICKNESS": 1.0, "PAYLOAD_MASS": 220.0, "TETHER_DENSITY": 0.1,
+                    "TETHER_FRACTION": 1.0, "TARGET_NET_LIFT": 0.0, "SAFETY_FACTOR": 4.0,
+                    "SOLAR_FLUX": 1000.0, "WIND_SPEED": 5.0, "EMISSIVITY": 0.8, "ABSORPTIVITY": 0.3,
+                    "FATIGUE_FACTOR": 0.995, "UV_DEGRADATION": 0.02
+                }
+                for key, val in aero_defaults.items():
+                    if key in self.inputs: self.inputs[key].set_value(val)
+                self.inputs["MATERIAL_CLASS"].setCurrentIndex(0)
+                self.inputs["INCLUDE_TETHER"].setChecked(True)
+                self.inputs["OPTIMIZE_LENGTH"].setChecked(True)
 
-            self.inputs["MATERIAL_CLASS"].setCurrentIndex(0)
+            elif hasattr(self, 'fairings_tab') and current_tab == self.fairings_tab:
+                lobe_offsets = {
+                    "LOBE_OFFSET_X_SLIDER": 10.0, "LOBE_OFFSET_Y_SLIDER": 10.0, "LOBE_OFFSET_Z_SLIDER": 10.0,
+                    "SHEET_LENGTH_RATIO_SLIDER": 0.5
+                }
+                for key, val in lobe_offsets.items():
+                    if key in self.inputs: self.inputs[key].set_value(val)
 
-            lobe_offsets = {
-                "LOBE_OFFSET_X_SLIDER": 10.0, "LOBE_OFFSET_Y_SLIDER": 10.0, "LOBE_OFFSET_Z_SLIDER": 10.0,
-                "SHEET_LENGTH_RATIO_SLIDER": 0.5
-            }
-            for key, val in lobe_offsets.items():
-                if key in self.inputs: self.inputs[key].set_value(val)
+            elif hasattr(self, 'fin_tab') and current_tab == self.fin_tab:
+                fin_defaults = {
+                    "FIN_RC_LENGTH": 15.5,
+                    "FIN_HEIGHT": 15.5,
+                    "FIN_THICKNESS": 10.0,
+                    "FIN_TAPER_RATIO": 0.55,
+                    "FIN_AXIAL_OFFSET": 80.0,
+                    "FIN_SECTION_RESOLUTION": 60,
+                    "FIN_SWEEP_ANGLE": 0.0,
+                    "FIN_TIP_ANGLE": 15.0,
+                    "FIN_NUMBER": 4,
+                    "FIN_DENSITY": 10.0
+                }
+                for key, val in fin_defaults.items():
+                    if key in self.inputs:
+                        self.inputs[key].set_value(val)
+                self.inputs["FIN_THETA_POS_TEXT"].setText("0.0, 90.0, 180.0, 270.0")
+                self.inputs["INCLUDE_FINS"].setChecked(True)
 
-            # 7. Clear Output Tab Displays
-            self.inputs["FINAL_OBJECT_NAME"].setText("Airship_Project")
-            self.log.clear()
-            for key in self.prop_outputs: self.prop_outputs[key].setText("0.0000")
-            self.matrix_table.clearContents()
-            self.plotter.clear()
-            if hasattr(self, 'fig'):
-                self.fig.clear()
-                self.canvas.draw()
+            elif hasattr(self, 'wing_tab') and current_tab == self.wing_tab:
+                wing_defaults = {
+                    "WING_SPAN": 20.0,
+                    "WING_ROOT_CHORD": 5.0,
+                    "WING_TIP_CHORD": 2.0,
+                    "WING_SWEEP": 15.0,
+                    "WING_DIHEDRAL": 5.0,
+                    "WING_TWIST_ROOT": 2.0,
+                    "WING_TWIST_TIP": -2.0,
+                    "WING_THICKNESS": 12.0,
+                    "WING_AXIAL_OFFSET": 40.0
+                }
+                for key, val in wing_defaults.items():
+                    if key in self.inputs:
+                        self.inputs[key].set_value(val)
+
+            elif current_tab == self.output_tab:
+                self.inputs["FINAL_OBJECT_NAME"].setText("Airship_Project")
+                self.inputs["N_PETALS"].set_value(8)
+                self.log.clear()
+                for key in self.prop_outputs: self.prop_outputs[key].setText("0.0000")
+                self.matrix_table.clearContents()
+                self.plotter.clear()
+                if hasattr(self, 'fig'):
+                    self.fig.clear()
+                    self.canvas.draw()
+                self.inputs["COMPUTE_ADDED_MASS"].setChecked(True)
 
         finally:
-            # 8. Unblock signals and update UI once
+            # Unblock signals and update UI once
             for input_widget in self.inputs.values():
                 if hasattr(input_widget, 'blockSignals'):
                     input_widget.blockSignals(False)
 
-            # Restore radio selections
-            self.mode_button_group.button(current_mode_id).setChecked(True)
-            self.lobe_button_group.button(current_lobe_id).setChecked(True)
-            self.inputs["ENVELOPE_SERIES"].setCurrentText(current_series)
-
             self.refresh_tabs()
             self._update_series_visibility() # Ensure correct slider state based on series
             self._auto_update_props()
-            self.log.append(f"Status: Reset successful for {current_shape_name}.")
+            self.log.append(f"Status: Tab specific reset successful.")
 
     def _update_navigation_buttons(self):
         idx = self.tab_widget.currentIndex()
