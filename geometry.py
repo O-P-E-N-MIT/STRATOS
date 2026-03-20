@@ -59,6 +59,7 @@ class AirshipGeometry:
         self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params["ENVELOPE_PARAMS"])
         self.params.setdefault("CENTRAL_LOBE_LENGTH", self.params["ENVELOPE_LENGTH"])
         self.params.setdefault("INCLUDE_FINS", True)
+        self.params.setdefault("INCLUDE_WINGS", False) # <-- REQUIRED FOR SALOME
 
         for key, value in self.params.items():
             if isinstance(value, str):
@@ -145,7 +146,7 @@ class AirshipGeometry:
             raise RuntimeError(f"Salome execution failed: {e}")
 
     def geometric_properties(self):
-        """Calculates theoretical geometric values including hull and fins."""
+        """Calculates theoretical geometric values including hull, fins, and wings."""
         envelope = GertlerEnvelope.from_parameters(
             self.params["ENVELOPE_PARAMS"],
             self.params["ENVELOPE_LENGTH"],
@@ -160,16 +161,16 @@ class AirshipGeometry:
         # 1. Calculate Hull Base Properties
         if lobe_number == 1:
             vol, surf, top, side, cv = (envelope.volume(), envelope.surface_area(),
-                                    envelope.side_projected_area(), envelope.side_projected_area(),
-                                    envelope.cv())
+                                        envelope.side_projected_area(), envelope.side_projected_area(),
+                                        envelope.cv())
         elif lobe_number == 2:
             vol, surf, top, side, cv = (envelope.volume_bilobe(f), envelope.surface_area_bilobe(f),
-                                    envelope.top_projected_area_bilobe(f), envelope.side_projected_area(),
-                                    envelope.cv_bilobe(f))
+                                        envelope.top_projected_area_bilobe(f), envelope.side_projected_area(),
+                                        envelope.cv_bilobe(f))
         else:
             vol, surf, top, side, cv = (envelope.volume_trilobe(e, f, g), envelope.surface_area_trilobe(e, f, g),
-                                    envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g),
-                                    envelope.cv_trilobe(e, f, g))
+                                        envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g),
+                                        envelope.cv_trilobe(e, f, g))
 
         # 2. Add Fin Contributions (if enabled)
         if self.params.get("INCLUDE_FINS", True):
@@ -179,23 +180,38 @@ class AirshipGeometry:
             taper = self.params.get("FIN_TAPER_RATIO", 1)
             thick_ratio = self.params.get("FIN_THICKNESS", 0) / 100.0
 
-            # Area of one side of one fin (Trapezoid)
             fin_planform_area = 0.5 * (rc + rc * taper) * h
-
-            # Total Fin Surface Area (2 sides per fin)
             surf += (2 * fin_planform_area * n_fins)
-
-            # Fin Volume Estimation (Approximate using planform area and thickness)
-            # Volume ~ Planform Area * Average Thickness
             fin_vol = fin_planform_area * (rc * thick_ratio)
             vol += (fin_vol * n_fins)
-
-            # Update Projected Areas (Simplified assumption for fins at 0, 90, 180, 270)
-            # Two fins add to top area, two fins add to side area
             side += (fin_planform_area * 2)
             top += (fin_planform_area * 2)
 
+        # 3. Add Wing Contributions (if enabled)
+        if self.params.get("INCLUDE_WINGS", False):
+            span = self.params.get("WING_SPAN", 20.0)
+            cr = self.params.get("WING_ROOT_CHORD", 5.0)
+            ct = self.params.get("WING_TIP_CHORD", 2.0)
+            thick_ratio = self.params.get("WING_THICKNESS", 12.0) / 100.0
+            dihedral_deg = self.params.get("WING_DIHEDRAL", 5.0)
+
+            # Calculate true physical span accounting for dihedral stretch
+            import math
+            dihedral_rad = math.radians(dihedral_deg)
+            true_span = span / math.cos(dihedral_rad) if math.cos(dihedral_rad) != 0 else span
+
+            total_wing_planform_area = 0.5 * (cr + ct) * true_span
+            surf += (2 * total_wing_planform_area)
+
+            avg_chord = (cr + ct) / 2
+            wing_vol = total_wing_planform_area * (avg_chord * thick_ratio)
+            vol += wing_vol
+
+            top += 0.5 * (cr + ct) * span
+            side += (cr * thick_ratio * span * 0.1) + (true_span * math.sin(dihedral_rad) * avg_chord * 0.5)
+
         return vol, surf, top, side, cv
+
 
 def plot_and_save_profile(params, length, nx, num_petals, nc, filename, shape_name="Airship_Geometry"):
     """Generates the DAT file and profile plot for the developed gore/petal."""
