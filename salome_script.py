@@ -26,183 +26,252 @@ FIN_NUMBER = 4
 FIN_THETA_POS = None
 
 SHEET_LENGTH_RATIO = 0.75
-INCLUDE_FINS = True  # New parameter to control fin generation
+INCLUDE_FINS = True
 
-DIRECTORY_PATH = "D:\\Airships\\GeometryModeller"
-OUTPUT_DIRECTORY = 'C:\\Airships\\GeometryModeller\\output'
+INCLUDE_WINGS = False
+WING_SPAN = 20.0
+WING_ROOT_CHORD = 5.0
+WING_TIP_CHORD = 2.0
+WING_SWEEP = 15.0
+WING_DIHEDRAL = 5.0
+WING_TWIST_ROOT = 2.0
+WING_TWIST_TIP = -2.0
+WING_THICKNESS = 12.0
+WING_AXIAL_OFFSET = 40.0
+
+DIRECTORY_PATH = "C:\\MIT\\untitled"
+OUTPUT_DIRECTORY = 'C:\\MIT\\untitled\\Output_1'
 OUTPUT_FORMAT = "BREP"
 FINAL_OBJECT_NAME = "Airship"
 
 # INPUT PARAMETERS END
 
-# Import all the required modules
-import salome
-from salome.geom import geomBuilder
-import numpy as np
 import sys
 import os
+import traceback
 import importlib
 
-# Salome executes the python script files from its own directory so to import local modules, we have to
-# add our own path manually.
+# Ensure the paths are registered
 sys.path.append(DIRECTORY_PATH)
 
-# This is to reload the local modules once they are changed.
-import geometry_handler
-importlib.reload(geometry_handler)
+try:
+    # We wrap everything inside the try block so any crash is caught and logged
+    import salome
+    from salome.geom import geomBuilder
+    import numpy as np
 
-# Inititating the Geometry Module of Salome.
-salome.salome_init()
-geompy = geomBuilder.New()
+    import geometry_handler
+    importlib.reload(geometry_handler)
 
-# ---
-# Elementary objects, directions and functions.
-# ---
+    salome.salome_init()
+    geompy = geomBuilder.New()
 
-O = geompy.MakeVertex(0, 0, 0)
-OX = geompy.MakeVectorDXDYDZ(1, 0, 0)
-OY = geompy.MakeVectorDXDYDZ(0, 1, 0)
-OZ = geompy.MakeVectorDXDYDZ(0, 0, 1)
+    O = geompy.MakeVertex(0, 0, 0)
+    OX = geompy.MakeVectorDXDYDZ(1, 0, 0)
+    OY = geompy.MakeVectorDXDYDZ(0, 1, 0)
+    OZ = geompy.MakeVectorDXDYDZ(0, 0, 1)
 
-def translate_object (object, x_offset, y_offset, z_offset):
-    return geompy.MakeTranslationTwoPoints(object, O, geompy.MakeVertex(x_offset * LOBE_OFFSET_X, y_offset * LOBE_OFFSET_Y, z_offset * LOBE_OFFSET_Z))
+    def translate_object (object, x_offset, y_offset, z_offset):
+        return geompy.MakeTranslationTwoPoints(object, O, geompy.MakeVertex(x_offset * LOBE_OFFSET_X, y_offset * LOBE_OFFSET_Y, z_offset * LOBE_OFFSET_Z))
 
-# ---
-# Modelling of envelope
-# ---
+    # --- Modelling of envelope ---
+    print('[LOG] Generating hull Profile...')
+    sys.stdout.flush()
 
-print('[LOG] Generating hull Profile...')
+    def create_envelope (params, length):
+        if ENVELOPE_SERIES == "GERTLER":
+            envelope_geom = geometry_handler.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
+        elif ENVELOPE_SERIES == "NACA":
+            envelope_geom = geometry_handler.NACAEnvelope.from_parameters((params[4],), length, ENVELOPE_RESOLUTION)
 
-def create_envelope (params, length):
-    print(f'[LOG] Generating envelope having Gertler parameters {params}...')
-    
-    if ENVELOPE_SERIES == "GERTLER":
-        envelope_geom = geometry_handler.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
-    elif ENVELOPE_SERIES == "NACA":
-        envelope_geom = geometry_handler.NACAEnvelope.from_parameters((params[4],), length, ENVELOPE_RESOLUTION)
+        envelope_vertices = [geompy.MakeVertex(x, y, 0) for x, y in envelope_geom.points(ENVELOPE_TRUNCATION_RATIO)]
+        envelope_edges = [geompy.MakeInterpol(envelope_vertices, False, False), geompy.MakeLineTwoPnt(geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), 0, 0), O)]
 
-    envelope_vertices = [geompy.MakeVertex(x, y, 0) for x, y in envelope_geom.points(ENVELOPE_TRUNCATION_RATIO)]
+        if ENVELOPE_TRUNCATION_RATIO:
+            try: envelope_edges.append(geompy.MakeLineTwoPnt(geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), geompy.PointCoordinates(envelope_vertices[-1])[1], 0), geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), 0, 0)))
+            except: pass
 
-    envelope_edges = [geompy.MakeInterpol(envelope_vertices, False, False), geompy.MakeLineTwoPnt(geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), 0, 0), O)]
+        envelope_wire = geompy.MakeWire(envelope_edges, 1e-7)
+        envelope_face = geompy.MakeFace(envelope_wire, 1)
+        envelope = geompy.MakeRevolution(envelope_face, OX, 2 * np.pi)
 
-    if ENVELOPE_TRUNCATION_RATIO:
-        try: envelope_edges.append(geompy.MakeLineTwoPnt(geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), geompy.PointCoordinates(envelope_vertices[-1])[1], 0), geompy.MakeVertex(length * (1 - ENVELOPE_TRUNCATION_RATIO), 0, 0)))
-        except: pass
+        return envelope_geom, envelope
 
-    envelope_wire = geompy.MakeWire(envelope_edges, 1e-7)
-    envelope_face = geompy.MakeFace(envelope_wire, 1)
-    envelope = geompy.MakeRevolution(envelope_face, OX, 2 * np.pi)
+    extreme_envelope_geom, extreme_lobe = create_envelope(ENVELOPE_PARAMS, ENVELOPE_LENGTH)
 
-    return envelope_geom, envelope
+    lobes = [extreme_lobe] if LOBE_NUMBER == 1 else [translate_object(extreme_lobe, 0, -1, 0), translate_object(extreme_lobe, 0, 1, 0)]
 
-extreme_envelope_geom, extreme_lobe = create_envelope(ENVELOPE_PARAMS, ENVELOPE_LENGTH)
+    if LOBE_NUMBER == 3:
+        central_lobe = extreme_lobe if not CENTRAL_LOBE_PARAMS else create_envelope(CENTRAL_LOBE_PARAMS, CENTRAL_LOBE_LENGTH)[1]
+        lobes.append(translate_object(central_lobe, 1, 0, 1))
 
-lobes = [extreme_lobe] if LOBE_NUMBER == 1 else [translate_object(extreme_lobe, 0, -1, 0), translate_object(extreme_lobe, 0, 1, 0)]
+    # --- Modelling of Fins ---
+    fins = []
+    if INCLUDE_FINS:
+        print('[LOG] Generating fins...')
+        sys.stdout.flush()
 
-if LOBE_NUMBER == 3:
-    central_lobe = extreme_lobe if not CENTRAL_LOBE_PARAMS else create_envelope(CENTRAL_LOBE_PARAMS, CENTRAL_LOBE_LENGTH)[1]
-    lobes.append(translate_object(central_lobe, 1, 0, 1))
+        RC_RADIAL_OFFSET = extreme_envelope_geom.at(FIN_AXIAL_OFFSET)
+        TC_RADIAL_OFFSET = RC_RADIAL_OFFSET + FIN_HEIGHT
+        RC_AXIAL_OFFSET = FIN_AXIAL_OFFSET
+        TC_AXIAL_OFFSET = RC_AXIAL_OFFSET + FIN_RC_LENGTH/2 * (1 - FIN_TAPER_RATIO) + FIN_HEIGHT * np.tan(np.radians(FIN_SWEEP_ANGLE))
 
-# ---
-# Modelling of Fins (Conditional)
-# ---
+        COS_TIP_ANGLE = np.cos(np.radians(FIN_TIP_ANGLE))
+        SIN_TIP_ANGLE = np.sin(np.radians(FIN_TIP_ANGLE))
 
-fins = []
+        rc_vertices = []
+        tc_vertices = []
 
-if INCLUDE_FINS:
-    print('[LOG] Generating fins...')
+        for x, y in geometry_handler.naca_airfoil_points(FIN_THICKNESS, FIN_SECTION_RESOLUTION, FIN_RC_LENGTH):
+            rc_vertices.append(geompy.MakeVertex(RC_AXIAL_OFFSET + x, y, RC_RADIAL_OFFSET))
+            tc_vertices.append(geompy.MakeVertex(TC_AXIAL_OFFSET + x * FIN_TAPER_RATIO * COS_TIP_ANGLE, y * FIN_TAPER_RATIO, TC_RADIAL_OFFSET - x * FIN_TAPER_RATIO * SIN_TIP_ANGLE))
 
-    RC_RADIAL_OFFSET = extreme_envelope_geom.at(FIN_AXIAL_OFFSET)
-    TC_RADIAL_OFFSET = RC_RADIAL_OFFSET + FIN_HEIGHT
-    RC_AXIAL_OFFSET = FIN_AXIAL_OFFSET
-    TC_AXIAL_OFFSET = RC_AXIAL_OFFSET + FIN_RC_LENGTH/2 * (1 - FIN_TAPER_RATIO) + FIN_HEIGHT * np.tan(np.radians(FIN_SWEEP_ANGLE))
+        rc_wire = geompy.MakePolyline(rc_vertices, True)
+        tc_wire = geompy.MakePolyline(tc_vertices, True)
+        rc_face = geompy.MakeFace(rc_wire, True)
+        tc_face = geompy.MakeFace(tc_wire, True)
 
-    COS_TIP_ANGLE = np.cos(np.radians(FIN_TIP_ANGLE))
-    SIN_TIP_ANGLE = np.sin(np.radians(FIN_TIP_ANGLE))
+        midchord_direction = [geompy.MakeVertex(RC_AXIAL_OFFSET, 0, 0), geompy.MakeVertex(TC_AXIAL_OFFSET, 0, FIN_HEIGHT)]
+        planform_surface = geompy.MakePipeWithDifferentSectionsBySteps([rc_wire, tc_wire], midchord_direction, geompy.MakePolyline(midchord_direction, False))
 
-    rc_vertices = []
-    tc_vertices = []
+        TRAIL_X, TRAIL_Z, INTERCEPT_OFFSET = extreme_envelope_geom.get_fin_intercept(RC_AXIAL_OFFSET, FIN_RC_LENGTH)
 
-    for x, y in geometry_handler.naca_airfoil_points(FIN_THICKNESS, FIN_SECTION_RESOLUTION, FIN_RC_LENGTH):
-        rc_vertices.append(geompy.MakeVertex(RC_AXIAL_OFFSET + x, y, RC_RADIAL_OFFSET))
-        tc_vertices.append(geompy.MakeVertex(TC_AXIAL_OFFSET + x * FIN_TAPER_RATIO * COS_TIP_ANGLE, y * FIN_TAPER_RATIO, TC_RADIAL_OFFSET - x * FIN_TAPER_RATIO * SIN_TIP_ANGLE))
+        fin = geompy.MakeSolid(geompy.MakeShell([planform_surface, rc_face, tc_face]))
+        fin = geompy.MakeRotationThreePoints(fin, geompy.MakeVertex(RC_AXIAL_OFFSET, 0, RC_RADIAL_OFFSET), geompy.MakeVertex(RC_AXIAL_OFFSET + FIN_RC_LENGTH, 0, RC_RADIAL_OFFSET), geompy.MakeVertex(TRAIL_X, 0, TRAIL_Z))
+        fin = geompy.MakeTranslationVectorDistance(fin, OZ, -INTERCEPT_OFFSET)
 
-    rc_wire = geompy.MakePolyline(rc_vertices, True)
-    tc_wire = geompy.MakePolyline(tc_vertices, True)
-    rc_face = geompy.MakeFace(rc_wire, True)
-    tc_face = geompy.MakeFace(tc_wire, True)
-
-    midchord_direction = [geompy.MakeVertex(RC_AXIAL_OFFSET, 0, 0), geompy.MakeVertex(TC_AXIAL_OFFSET, 0, FIN_HEIGHT)]
-    planform_surface = geompy.MakePipeWithDifferentSectionsBySteps([rc_wire, tc_wire], midchord_direction, geompy.MakePolyline(midchord_direction, False))
-
-    TRAIL_X, TRAIL_Z, INTERCEPT_OFFSET = extreme_envelope_geom.get_fin_intercept(RC_AXIAL_OFFSET, FIN_RC_LENGTH)
-
-    fin = geompy.MakeSolid(geompy.MakeShell([planform_surface, rc_face, tc_face]))
-    fin = geompy.MakeRotationThreePoints(fin, geompy.MakeVertex(RC_AXIAL_OFFSET, 0, RC_RADIAL_OFFSET), geompy.MakeVertex(RC_AXIAL_OFFSET + FIN_RC_LENGTH, 0, RC_RADIAL_OFFSET), geompy.MakeVertex(TRAIL_X, 0, TRAIL_Z))
-    fin = geompy.MakeTranslationVectorDistance(fin, OZ, -INTERCEPT_OFFSET)
-
-    if LOBE_NUMBER == 1:
-        if not FIN_THETA_POS:
-            FIN_THETA_POS = [i * (360 / FIN_NUMBER) for i in range(0, int(FIN_NUMBER))]
-        fins = [geompy.MakeRotation(fin, OX, -np.pi/2 + np.radians(theta)) for theta in FIN_THETA_POS]
+        if LOBE_NUMBER == 1:
+            if not FIN_THETA_POS:
+                FIN_THETA_POS = [i * (360 / FIN_NUMBER) for i in range(0, int(FIN_NUMBER))]
+            fins = [geompy.MakeRotation(fin, OX, -np.pi/2 + np.radians(theta)) for theta in FIN_THETA_POS]
+        else:
+            for theta in FIN_THETA_POS:
+                fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(theta)), 0, -1, 0))
+                fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(-theta)), 0, 1, 0))
     else:
-        for theta in FIN_THETA_POS:
-            fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(theta)), 0, -1, 0))
-            fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(-theta)), 0, 1, 0))
-else:
-    print('[LOG] Skipping fin generation as per user choice...')
+        print('[LOG] Skipping fin generation...')
+        sys.stdout.flush()
 
-# ---
-# Modelling of Thin Fairings (conditional)
-# ---
+    # --- Modelling of Wings ---
+    wings = []
+    if INCLUDE_WINGS and WING_SPAN > 0:
+        print('[LOG] Generating wings...')
+        sys.stdout.flush()
 
-fairings = []
+        n_span = 10
+        y_stations = np.linspace(0, WING_SPAN/2, n_span)
 
-def create_fairing_quad (p1, p2, p3, p4):
-    fairing = geompy.MakeQuad4Vertices(geompy.MakeVertex(*p1), geompy.MakeVertex(*p2), geompy.MakeVertex(*p3), geompy.MakeVertex(*p4))
-    normal = geompy.MakeVectorDXDYDZ(*np.cross(np.array(p2) - np.array(p1), np.array(p3) - np.array(p1)))
-    fairings.append(geompy.MakePrismVecH2Ways(fairing, normal, 1e-7))
+        taper = WING_TIP_CHORD / WING_ROOT_CHORD if WING_ROOT_CHORD > 0 else 0
+        c_dist = WING_ROOT_CHORD * (1 - (1 - taper) * (2 * y_stations / WING_SPAN))
+        x_le = y_stations * np.tan(np.radians(WING_SWEEP))
+        z_shift = y_stations * np.tan(np.radians(WING_DIHEDRAL))
 
-if SHEET_LENGTH_RATIO:
-    print("[LOG] Generating fairings...")
+        wires_right = []
+        wires_left = []
 
-    SHEET_LENGTH = ENVELOPE_LENGTH * SHEET_LENGTH_RATIO
+        for i in range(len(y_stations)):
+            chord = c_dist[i]
 
-    if LOBE_NUMBER == 2:
-        create_fairing_quad((ENVELOPE_LENGTH, -LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, -LOBE_OFFSET_Y, 0))
-    elif LOBE_NUMBER == 3:
-        create_fairing_quad((ENVELOPE_LENGTH, -LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X, 0, LOBE_OFFSET_Z), (ENVELOPE_LENGTH - SHEET_LENGTH, -LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X - SHEET_LENGTH, 0, LOBE_OFFSET_Z))
-        create_fairing_quad((ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X, 0, LOBE_OFFSET_Z), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X - SHEET_LENGTH, 0, LOBE_OFFSET_Z))
+            span_half = WING_SPAN/2 if WING_SPAN > 0 else 1
+            theta_val = WING_TWIST_ROOT + (WING_TWIST_TIP - WING_TWIST_ROOT) * (y_stations[i] / span_half)
+            twist = np.radians(theta_val)
+            y_val = y_stations[i]
 
-# Final Fusion Logic
-print('[LOG] Generating final model...')
+            pts_right = []
+            pts_left = []
 
-Final_Lobes_Solid = geompy.MakeFuseList(lobes)
+            for x_af, z_af in geometry_handler.naca_airfoil_points(WING_THICKNESS, FIN_SECTION_RESOLUTION, chord):
+                x_qc = 0.25 * chord
+                x_shift_val = x_af - x_qc
 
-Final_Airship_Solid = geompy.MakeFuseList(lobes + (fins if INCLUDE_FINS else []))
-Final_Airship_Solid = geompy.MakeCompound([Final_Airship_Solid] + fairings)
-Final_Airship_Solid_ID = geompy.addToStudy(Final_Airship_Solid, FINAL_OBJECT_NAME)
+                x_rot = x_shift_val * np.cos(twist) + z_af * np.sin(twist)
+                z_rot = -x_shift_val * np.sin(twist) + z_af * np.cos(twist)
+                x_rot += x_qc
 
-if salome.sg.hasDesktop():
-    gg = salome.ImportComponentGUI("GEOM")
-    gg.createAndDisplayGO(Final_Airship_Solid_ID)
-    gg.setDisplayMode(Final_Airship_Solid_ID, 1)
-    salome.sg.updateObjBrowser()
+                X_final = WING_AXIAL_OFFSET + x_rot + x_le[i]
+                Z_final = z_rot + z_shift[i]
 
-OUTPUT_FILE_COMPLETE = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}.{OUTPUT_FORMAT.lower()}")
-OUTPUT_FILE_LOBES = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}_lobes.{OUTPUT_FORMAT.lower()}")
+                pts_right.append(geompy.MakeVertex(X_final, y_val, Z_final))
+                pts_left.append(geompy.MakeVertex(X_final, -y_val, Z_final))
 
-print(f'[LOG] Attempting to export...')
+            wires_right.append(geompy.MakePolyline(pts_right, True))
+            wires_left.append(geompy.MakePolyline(pts_left, True))
 
-if OUTPUT_FORMAT == 'STL':
-    # TODO: Figure out a good guess for deflection for exporting STL with length/resolution units.
-    geompy.ExportSTL(Final_Airship_Solid, OUTPUT_FILE_COMPLETE, True, 0.001 * ENVELOPE_LENGTH/ENVELOPE_RESOLUTION)
-    geompy.ExportSTL(Final_Lobes_Solid, OUTPUT_FILE_LOBES, False)
-elif OUTPUT_FORMAT == 'BREP':
-    geompy.ExportBREP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
-    geompy.ExportBREP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
-elif OUTPUT_FORMAT == 'STEP':
-    geompy.ExportSTEP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
-    geompy.ExportSTEP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
+        wing_right = geompy.MakeThruSections(wires_right, True, 0.0001, False)
+        wing_left = geompy.MakeThruSections(wires_left, True, 0.0001, False)
 
-print(f'[LOG] Exported {OUTPUT_FORMAT} successfully. Waiting for user to exit (MainLoop)...')
+        wings = [wing_right, wing_left]
+    else:
+        print('[LOG] Skipping wing generation...')
+        sys.stdout.flush()
+
+    # --- Modelling of Thin Fairings ---
+    fairings = []
+    def create_fairing_quad (p1, p2, p3, p4):
+        fairing = geompy.MakeQuad4Vertices(geompy.MakeVertex(*p1), geompy.MakeVertex(*p2), geompy.MakeVertex(*p3), geompy.MakeVertex(*p4))
+        normal = geompy.MakeVectorDXDYDZ(*np.cross(np.array(p2) - np.array(p1), np.array(p3) - np.array(p1)))
+        fairings.append(geompy.MakePrismVecH2Ways(fairing, normal, 1e-7))
+
+    if SHEET_LENGTH_RATIO:
+        print("[LOG] Generating fairings...")
+        sys.stdout.flush()
+        SHEET_LENGTH = ENVELOPE_LENGTH * SHEET_LENGTH_RATIO
+        if LOBE_NUMBER == 2:
+            create_fairing_quad((ENVELOPE_LENGTH, -LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (ENVELOPE_LENGTH - SHEET_LENGTH, -LOBE_OFFSET_Y, 0))
+        elif LOBE_NUMBER == 3:
+            create_fairing_quad((ENVELOPE_LENGTH, -LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X, 0, LOBE_OFFSET_Z), (ENVELOPE_LENGTH - SHEET_LENGTH, -LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X - SHEET_LENGTH, 0, LOBE_OFFSET_Z))
+            create_fairing_quad((ENVELOPE_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X, 0, LOBE_OFFSET_Z), (ENVELOPE_LENGTH - SHEET_LENGTH, LOBE_OFFSET_Y, 0), (CENTRAL_LOBE_LENGTH + LOBE_OFFSET_X - SHEET_LENGTH, 0, LOBE_OFFSET_Z))
+
+    # --- Final Fusion Logic ---
+    print('[LOG] Generating final model...')
+    sys.stdout.flush()
+
+    if len(lobes) > 1:
+        Final_Lobes_Solid = geompy.MakeFuseList(lobes)
+    else:
+        Final_Lobes_Solid = lobes[0]
+
+    components_to_fuse = lobes + (fins if INCLUDE_FINS else []) + wings
+    if len(components_to_fuse) > 1:
+        Final_Airship_Solid = geompy.MakeFuseList(components_to_fuse)
+    else:
+        Final_Airship_Solid = components_to_fuse[0]
+
+    if len(fairings) > 0:
+        Final_Airship_Solid = geompy.MakeCompound([Final_Airship_Solid] + fairings)
+
+    Final_Airship_Solid_ID = geompy.addToStudy(Final_Airship_Solid, FINAL_OBJECT_NAME)
+
+    if salome.sg.hasDesktop():
+        gg = salome.ImportComponentGUI("GEOM")
+        gg.createAndDisplayGO(Final_Airship_Solid_ID)
+        gg.setDisplayMode(Final_Airship_Solid_ID, 1)
+        salome.sg.updateObjBrowser()
+
+    OUTPUT_FILE_COMPLETE = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}.{OUTPUT_FORMAT.lower()}")
+    OUTPUT_FILE_LOBES = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}_lobes.{OUTPUT_FORMAT.lower()}")
+
+    print(f'[LOG] Attempting to export to {OUTPUT_FILE_COMPLETE}...')
+    sys.stdout.flush()
+
+    if OUTPUT_FORMAT == 'STL':
+        geompy.ExportSTL(Final_Airship_Solid, OUTPUT_FILE_COMPLETE, False)
+        geompy.ExportSTL(Final_Lobes_Solid, OUTPUT_FILE_LOBES, False)
+    elif OUTPUT_FORMAT == 'BREP':
+        geompy.ExportBREP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
+        geompy.ExportBREP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
+    elif OUTPUT_FORMAT == 'STEP':
+        geompy.ExportSTEP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
+        geompy.ExportSTEP(Final_Lobes_Solid, OUTPUT_FILE_LOBES)
+
+    print(f'[LOG] Exported {OUTPUT_FORMAT} successfully.')
+    sys.stdout.flush()
+
+except Exception as e:
+    # IF SALOME CRASHES, IT WILL WRITE THE ERROR HERE
+    error_log_path = os.path.join(OUTPUT_DIRECTORY, "salome_crash_log.txt")
+    with open(error_log_path, "w") as f:
+        f.write("--- SALOME FATAL ERROR ---\n")
+        f.write(traceback.format_exc())
+    print(f"[FATAL ERROR] Salome crashed. Please open {error_log_path} to see the exact error.")
+    sys.stdout.flush()
