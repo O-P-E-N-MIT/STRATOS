@@ -392,13 +392,13 @@ class NACAEnvelope(Envelope):
 
     def at (self, x):
         x = x / self.length
-        y = 500 * self.diameter / self.length * (0.2969 * x**0.5 - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
+        y = 5 * self.diameter * (0.2969 * x**0.5 - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1036 * x**4)
         return y
     
     # Returns an array of points representing the envelope.
     def points (self, truncation = 0, tuples = True):
         X = np.linspace(0, 1 - truncation, self.n)
-        R = 500 * self.diameter / self.length * (0.2969 * X**0.5 - 0.1260 * X - 0.3516 * X**2 + 0.2843 * X**3 - 0.1036 * X**4)
+        R = 5 * self.diameter * (0.2969 * X**0.5 - 0.1260 * X - 0.3516 * X**2 + 0.2843 * X**3 - 0.1036 * X**4)
         R[R < 0] = 0
 
         # In case if there is no truncation, the final point must lie on the axis.

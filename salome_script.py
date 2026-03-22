@@ -107,7 +107,9 @@ try:
 
     # --- Modelling of Fins ---
     fins = []
-    if INCLUDE_FINS:
+    
+    # Fin axial offset will be negative if the envelope length is smaller than fin root chord. In that case, fin generation is skipped.
+    if INCLUDE_FINS and FIN_AXIAL_OFFSET > 0:
         print('[LOG] Generating fins...')
         sys.stdout.flush()
 
@@ -152,7 +154,6 @@ try:
         print('[LOG] Skipping fin generation...')
         sys.stdout.flush()
 
-    # --- Modelling of Wings ---
     # --- Modelling of Wings ---
     wings = []
     if INCLUDE_WINGS and WING_SPAN > 0:
