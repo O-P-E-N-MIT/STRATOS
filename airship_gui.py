@@ -20,6 +20,9 @@ from balloon import create_balloon_geometry
 from geometry import AirshipGeometry, plot_and_save_profile
 from geometry_handler import STANDARD_ENVELOPES
 
+# --- NEW AIRFOIL IMPORT ---
+from airfoil import get_airfoil_points
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
@@ -202,6 +205,7 @@ class AirshipGUI(QMainWindow):
         self.fairings_tab = QWidget()
         self.fin_tab = QWidget()
         self.wing_tab = QWidget()
+        self.airfoil_tab = QWidget() # --- NEW AIRFOIL TAB INSTANCE ---
         self.output_tab = QWidget()
 
         self.setup_primary_tab_layout()
@@ -209,6 +213,7 @@ class AirshipGUI(QMainWindow):
         self.setup_fairings_tab()
         self.setup_fin_tab()
         self.setup_wing_tab()
+        self.setup_airfoil_tab()     # --- INITIALIZE AIRFOIL TAB ---
         self.setup_output_tab()
 
         self.main_layout.addWidget(self.tab_widget)
@@ -400,6 +405,7 @@ class AirshipGUI(QMainWindow):
         self.inputs["VOLUME"] = LabeledSlider("Volume (m³)", 0, 1000000, 5000, 0.1, 4)
         vl.addWidget(self.inputs["VOLUME"])
         layout.addWidget(self.volume_box)
+
         # --- NEW: Appendages Box for Wing Toggle ---
         self.appendages_box = QGroupBox("Hull Appendages")
         al = QVBoxLayout(self.appendages_box)
@@ -424,9 +430,9 @@ class AirshipGUI(QMainWindow):
 
         wing_dim_group = QGroupBox("Wing Parameters")
         w_layout = QGridLayout(wing_dim_group)
-        self.inputs["WING_SPAN"] = LabeledSlider("Span (m)", 5.0, 100.0, 80.0, 0.1, 2)
-        self.inputs["WING_ROOT_CHORD"] = LabeledSlider("Root Chord (Cr)", 1.0, 20.0, 30.0, 0.1, 2)
-        self.inputs["WING_TIP_CHORD"] = LabeledSlider("Tip Chord (Ct)", 0.1, 20.0, 20.0, 0.1, 2)
+        self.inputs["WING_SPAN"] = LabeledSlider("Span (m)", 5.0, 100.0, 20.0, 0.1, 2)
+        self.inputs["WING_ROOT_CHORD"] = LabeledSlider("Root Chord (Cr)", 1.0, 20.0, 5.0, 0.1, 2)
+        self.inputs["WING_TIP_CHORD"] = LabeledSlider("Tip Chord (Ct)", 0.1, 20.0, 2.0, 0.1, 2)
         self.inputs["WING_SWEEP"] = LabeledSlider("Sweep (Deg)", 0.0, 45.0, 15.0, 0.1, 2)
         self.inputs["WING_DIHEDRAL"] = LabeledSlider("Dihedral (Deg)", -10.0, 30.0, 5.0, 0.1, 2)
         self.inputs["WING_TWIST_ROOT"] = LabeledSlider("Root Twist (Deg)", -10.0, 15.0, 2.0, 0.1, 2)
@@ -446,6 +452,123 @@ class AirshipGUI(QMainWindow):
 
         main_layout.addWidget(wing_dim_group)
         main_layout.addStretch(1)
+
+    # --- NEW METHOD: AIRFOIL TAB IMPLEMENTATION ---
+    def setup_airfoil_tab(self):
+        layout = QHBoxLayout(self.airfoil_tab)
+
+        controls_group = QGroupBox("Airfoil Parameters")
+        controls_layout = QVBoxLayout()
+
+        mode_layout = QGridLayout()
+        self.inputs["AIRFOIL_MODE"] = QComboBox()
+        self.inputs["AIRFOIL_MODE"].setObjectName("LargeDropdown")
+        self.inputs["AIRFOIL_MODE"].addItems(["NACA 4-Digit Symmetric", "From CSV File"])
+        self.inputs["AIRFOIL_MODE"].currentIndexChanged.connect(self._toggle_airfoil_inputs)
+        mode_layout.addWidget(QLabel("Generation Mode:"), 0, 0)
+        mode_layout.addWidget(self.inputs["AIRFOIL_MODE"], 0, 1)
+        controls_layout.addLayout(mode_layout)
+
+        self.naca_group = QWidget()
+        naca_l = QVBoxLayout(self.naca_group)
+        naca_l.setContentsMargins(0, 0, 0, 0)
+        self.inputs["AIRFOIL_THICKNESS"] = LabeledSlider("Max Thickness (%)", 1.0, 50.0, 12.0, 0.1, 1)
+        naca_l.addWidget(self.inputs["AIRFOIL_THICKNESS"])
+        controls_layout.addWidget(self.naca_group)
+
+        self.file_group = QWidget()
+        file_l = QGridLayout(self.file_group)
+        file_l.setContentsMargins(0, 0, 0, 0)
+        self.inputs["AIRFOIL_FILE"] = QLineEdit()
+        self.btn_browse_airfoil = QPushButton("Browse CSV")
+        self.btn_browse_airfoil.clicked.connect(self._browse_airfoil_file)
+        self.inputs["AIRFOIL_METHOD"] = QComboBox()
+        self.inputs["AIRFOIL_METHOD"].addItems(["cst", "parsec"])
+
+        file_l.addWidget(QLabel("File Path:"), 0, 0)
+        file_l.addWidget(self.inputs["AIRFOIL_FILE"], 0, 1)
+        file_l.addWidget(self.btn_browse_airfoil, 0, 2)
+        file_l.addWidget(QLabel("Fitting Method:"), 1, 0)
+        file_l.addWidget(self.inputs["AIRFOIL_METHOD"], 1, 1, 1, 2)
+        self.file_group.hide()
+        controls_layout.addWidget(self.file_group)
+
+        common_group = QGroupBox("Transformations & Resolution")
+        common_l = QVBoxLayout(common_group)
+        self.inputs["AIRFOIL_RES"] = LabeledSlider("Resolution", 10, 500, 100, 1, 0)
+        self.inputs["AIRFOIL_SCALE"] = LabeledSlider("Scale Factor", 0.01, 10.0, 1.0, 0.01, 2)
+        self.inputs["AIRFOIL_TX"] = LabeledSlider("Translation X", -50.0, 50.0, 0.0, 0.01, 2)
+        self.inputs["AIRFOIL_TY"] = LabeledSlider("Translation Y", -50.0, 50.0, 0.0, 0.01, 2)
+        self.inputs["AIRFOIL_ROT"] = LabeledSlider("Rotation Angle (°)", -180.0, 180.0, 0.0, 0.1, 1)
+
+        common_l.addWidget(self.inputs["AIRFOIL_RES"])
+        common_l.addWidget(self.inputs["AIRFOIL_SCALE"])
+        common_l.addWidget(self.inputs["AIRFOIL_TX"])
+        common_l.addWidget(self.inputs["AIRFOIL_TY"])
+        common_l.addWidget(self.inputs["AIRFOIL_ROT"])
+        controls_layout.addWidget(common_group)
+
+        self.btn_gen_airfoil = QPushButton("GENERATE & PREVIEW AIRFOIL")
+        self.btn_gen_airfoil.setMinimumHeight(40)
+        self.btn_gen_airfoil.setStyleSheet("background-color: #00BFFF; color: #1e1e1e; font-weight: bold;")
+        self.btn_gen_airfoil.clicked.connect(self._generate_and_plot_airfoil)
+        controls_layout.addWidget(self.btn_gen_airfoil)
+        controls_layout.addStretch()
+
+        controls_group.setLayout(controls_layout)
+        layout.addWidget(controls_group, 1)
+
+        plot_group = QGroupBox("Airfoil Preview")
+        plot_layout = QVBoxLayout(plot_group)
+        self.airfoil_fig = Figure(facecolor='#1e1e1e', tight_layout=True)
+        self.airfoil_canvas = FigureCanvas(self.airfoil_fig)
+        plot_layout.addWidget(self.airfoil_canvas)
+        layout.addWidget(plot_group, 2)
+
+    def _toggle_airfoil_inputs(self, index):
+        self.naca_group.setVisible(index == 0)
+        self.file_group.setVisible(index == 1)
+
+    def _browse_airfoil_file(self):
+        fname, _ = QFileDialog.getOpenFileName(self, "Open Airfoil CSV", "", "CSV Files (*.csv)")
+        if fname:
+            self.inputs["AIRFOIL_FILE"].setText(fname)
+
+    def _generate_and_plot_airfoil(self):
+        try:
+            res = int(self.inputs["AIRFOIL_RES"].get_value())
+            scale = float(self.inputs["AIRFOIL_SCALE"].get_value())
+            rot = float(self.inputs["AIRFOIL_ROT"].get_value())
+            trans = (float(self.inputs["AIRFOIL_TX"].get_value()), float(self.inputs["AIRFOIL_TY"].get_value()))
+
+            if self.inputs["AIRFOIL_MODE"].currentIndex() == 0:
+                thick = float(self.inputs["AIRFOIL_THICKNESS"].get_value())
+                x, y = get_airfoil_points(thickness=thick, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+            else:
+                fpath = self.inputs["AIRFOIL_FILE"].text()
+                if not fpath:
+                    QMessageBox.warning(self, "Missing File", "Please select a CSV file first.")
+                    return
+                meth = self.inputs["AIRFOIL_METHOD"].currentText()
+                x, y = get_airfoil_points(filename=fpath, method=meth, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+
+            self.airfoil_fig.clear()
+            ax = self.airfoil_fig.add_subplot(111)
+            ax.plot(x, y, color='#00BFFF', linewidth=2, marker='o', markersize=3)
+            ax.set_aspect('equal', adjustable='box')
+            ax.grid(True, alpha=0.2, linestyle='--')
+            ax.set_facecolor('#1e1e1e')
+            for spine in ax.spines.values():
+                spine.set_color('#3c3c3c')
+            ax.tick_params(colors='white')
+
+            self.airfoil_fig.tight_layout()
+            self.airfoil_canvas.draw()
+
+            self.log.append("[SUCCESS] Airfoil preview generated.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Airfoil Generation failed: {e}")
+            self.log.append(f"[ERROR] Airfoil error: {e}")
 
     def _update_series_visibility(self):
         """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA)."""
@@ -593,7 +716,7 @@ class AirshipGUI(QMainWindow):
         is_aero = (mode_id == 4)
         is_multi = self.lobe_button_group.checkedId() > 1 and not is_balloon
 
-        # --- NEW: Check if wings are enabled ---
+        # --- Check if wings are enabled ---
         is_winged = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked() and not is_balloon
 
         # Toggle Input group visibility
@@ -604,8 +727,6 @@ class AirshipGUI(QMainWindow):
         self.volume_box.setHidden(not (is_vol or is_balloon))
         self.appendages_box.setHidden(is_balloon) # Hide the wing toggle in balloon mode
 
-        # ... (keep the existing output tab logic for aero vs standard modes) ...
-
         # Update available tabs
         curr = self.tab_widget.currentIndex()
         self.tab_widget.clear()
@@ -615,12 +736,12 @@ class AirshipGUI(QMainWindow):
             self.tab_widget.addTab(self.aerostat_tab, "Aerostat Analysis")
         if is_multi:
             self.tab_widget.addTab(self.fairings_tab, "Multi-Lobe Configuration")
+        if is_winged:
+            self.tab_widget.addTab(self.wing_tab, "Wing Design")
+            self.tab_widget.addTab(self.airfoil_tab, "Airfoil Design")
         if not is_balloon:
             self.tab_widget.addTab(self.fin_tab, "Fin Design")
 
-        # --- NEW: Conditionally add the wing tab ---
-        if is_winged:
-            self.tab_widget.addTab(self.wing_tab, "Wing Design")
 
         self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1))
@@ -1114,8 +1235,7 @@ class AirshipGUI(QMainWindow):
             "TETHER_DENSITY", "TETHER_FRACTION", "BALLONET_NUMBER",
             "BALLONET_FABRIC_DENSITY", "MARGIN_HEIGHT", "SAFETY_FACTOR",
             "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
-            "FATIGUE_FACTOR", "UV_DEGRADATION",
-            "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
+            "FATIGUE_FACTOR", "UV_DEGRADATION", "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
             "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
             "WING_THICKNESS", "WING_AXIAL_OFFSET"
         ]
@@ -1142,6 +1262,28 @@ class AirshipGUI(QMainWindow):
             p["INCLUDE_WINGS"] = self.inputs["INCLUDE_WINGS"].isChecked()
         else:
             p["INCLUDE_WINGS"] = False
+
+        if p["INCLUDE_WINGS"] and hasattr(self, 'inputs') and "AIRFOIL_RES" in self.inputs:
+            try:
+                res = int(self.inputs["AIRFOIL_RES"].get_value())
+                scale = float(self.inputs["AIRFOIL_SCALE"].get_value())
+                rot = float(self.inputs["AIRFOIL_ROT"].get_value())
+                trans = (float(self.inputs["AIRFOIL_TX"].get_value()), float(self.inputs["AIRFOIL_TY"].get_value()))
+
+                if self.inputs["AIRFOIL_MODE"].currentIndex() == 0:
+                    thick = float(self.inputs["AIRFOIL_THICKNESS"].get_value())
+                    x, y = get_airfoil_points(thickness=thick, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+                else:
+                    fpath = self.inputs["AIRFOIL_FILE"].text()
+                    meth = self.inputs["AIRFOIL_METHOD"].currentText()
+                    x, y = get_airfoil_points(filename=fpath, method=meth, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+
+                p["AIRFOIL_X"] = x.tolist() if hasattr(x, 'tolist') else list(x)
+                p["AIRFOIL_Y"] = y.tolist() if hasattr(y, 'tolist') else list(y)
+
+            except Exception as e:
+                self.log.append(f"[ERROR] Failed to package airfoil for Salome: {e}")
+                return None
 
         # Capture Profile Series
         p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
@@ -1390,9 +1532,9 @@ class AirshipGUI(QMainWindow):
 
             elif hasattr(self, 'wing_tab') and current_tab == self.wing_tab:
                 wing_defaults = {
-                    "WING_SPAN": 80.0,
-                    "WING_ROOT_CHORD": 30.0,
-                    "WING_TIP_CHORD": 20.0,
+                    "WING_SPAN": 20.0,
+                    "WING_ROOT_CHORD": 5.0,
+                    "WING_TIP_CHORD": 2.0,
                     "WING_SWEEP": 15.0,
                     "WING_DIHEDRAL": 5.0,
                     "WING_TWIST_ROOT": 2.0,
