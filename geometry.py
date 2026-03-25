@@ -6,6 +6,7 @@ import numpy as np
 from geometry_handler import GertlerEnvelope
 from meshlab_handler import apply_filters, get_meshdata
 from added_mass import compute_added_mass
+from airfoil import get_airfoil_points
 
 try:
     import matplotlib.pyplot as plt
