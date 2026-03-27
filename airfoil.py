@@ -93,7 +93,7 @@ class BaseFitter:
 
         # return xu, yu, xl, yl
 
-    def get_rsme_error(self):
+    def get_rmse_error(self):
         return np.sqrt(np.mean((self.y_norm - self._fit_build(self.x_norm, self.parameters))**2))
 
 class CST(BaseFitter):
@@ -358,8 +358,8 @@ def get_airfoil_points(thickness=None, resolution=None, filename=None, method=No
             model2.fit(resolution)
 
             # If the error of cst model is high, parsec model is chosen.
-            # TODO: Instead of creating a separate functions to calculate the error, figure out a way to calculate the rsme from the fit() function itself.
-            if model.get_rsme_error() > model2.get_rsme_error():
+            # TODO: Instead of creating a separate functions to calculate the error, figure out a way to calculate the rmse from the fit() function itself.
+            if model.get_rmse_error() > model2.get_rmse_error():
                 model = model2
 
             return model.get_points(scale_factor, translation, rotation_angle)
