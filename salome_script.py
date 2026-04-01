@@ -63,6 +63,9 @@ try:
     import geometry_handler
     importlib.reload(geometry_handler)
 
+    import airfoil
+    importlib.reload(airfoil)
+
     salome.salome_init()
     geompy = geomBuilder.New()
 
@@ -143,7 +146,8 @@ try:
             rc_vertices = []
             tc_vertices = []
 
-            for x, y in geometry_handler.naca_airfoil_points(FIN_THICKNESS, FIN_SECTION_RESOLUTION, FIN_RC_LENGTH):
+            x_coords, y_coords = airfoil.get_airfoil_points(thickness=FIN_THICKNESS, resolution=FIN_SECTION_RESOLUTION, scale_factor=FIN_RC_LENGTH)
+            for x, y in zip(x_coords, y_coords):
                 rc_vertices.append(geompy.MakeVertex(RC_AXIAL_OFFSET + x, y, RC_RADIAL_OFFSET))
                 tc_vertices.append(geompy.MakeVertex(TC_AXIAL_OFFSET + x * FIN_TAPER_RATIO * COS_TIP_ANGLE, y * FIN_TAPER_RATIO, TC_RADIAL_OFFSET - x * FIN_TAPER_RATIO * SIN_TIP_ANGLE))
 
@@ -229,7 +233,12 @@ try:
                     scaled_z = np.array(AIRFOIL_Y) * chord
                     af_pts = zip(scaled_x, scaled_z)
                 else:
-                    af_pts = geometry_handler.naca_airfoil_points(WING_THICKNESS, FIN_SECTION_RESOLUTION, chord)
+                    # OLD:
+                    # af_pts = geometry_handler.naca_airfoil_points(WING_THICKNESS, FIN_SECTION_RESOLUTION, chord)
+
+                    # NEW:
+                    x_c, z_c = airfoil.get_airfoil_points(thickness=WING_THICKNESS, resolution=FIN_SECTION_RESOLUTION, scale_factor=chord)
+                    af_pts = zip(x_c, z_c)
 
                 for x_af, z_af in af_pts:
                     x_qc = 0.25 * chord
