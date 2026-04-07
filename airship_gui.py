@@ -328,7 +328,7 @@ class AirshipGUI(QMainWindow):
         # --- NEW: Envelope Series Selector ---
         self.inputs["ENVELOPE_SERIES"] = QComboBox()
         self.inputs["ENVELOPE_SERIES"].setObjectName("LargeDropdown")
-        self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA"])
+        self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA", "DRAGON_DREAM"])
         self.inputs["ENVELOPE_SERIES"].setMinimumHeight(45) # Maintained large height
         self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._update_series_visibility)
 
@@ -353,6 +353,14 @@ class AirshipGUI(QMainWindow):
         self.inputs["r1"] = LabeledSlider("Stern Radius (r1)", 0.01, 1, 0.251, 0.0001, 4)
         self.inputs["cp"] = LabeledSlider("Prismatic Coefficient (cp)", 0.5, 0.8, 0.651, 0.0001, 4)
         self.inputs["ENVELOPE_RESOLUTION"] = LabeledSlider("Resolution", 50, 500, 150, 1, 0)
+        self.inputs["HULL_WIDTH"] = LabeledSlider("Max Width (W)", 5.0, 100.0, 29.5, 0.1, 2)
+        self.inputs["HULL_HEIGHT"] = LabeledSlider("Max Height (H)", 5.0, 100.0, 14.0, 0.1, 2)
+        self.inputs["BOTTOM_FLATNESS"] = LabeledSlider("Bottom Flatness %", 0.0, 100.0, 25.0, 1.0, 0)
+
+# Add them to the layout (cl)
+        cl.addWidget(self.inputs["HULL_WIDTH"], 5, 0)
+        cl.addWidget(self.inputs["HULL_HEIGHT"], 5, 1)
+        cl.addWidget(self.inputs["BOTTOM_FLATNESS"], 6, 0)
 
         # REORDERED WIDGETS
         # Row 2: L/D and m1
@@ -572,19 +580,21 @@ class AirshipGUI(QMainWindow):
 
     def _update_series_visibility(self):
         """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA)."""
-        is_naca = self.inputs["ENVELOPE_SERIES"].currentText() == "NACA"
+        series = self.inputs["ENVELOPE_SERIES"].currentText()
+        is_naca = series == "NACA"
+        is_dragon = series == "DRAGON_DREAM"
 
-        # Hide Gertler specific inputs if NACA is selected
-        gertler_widgets = ["m1", "r0", "r1", "cp"]
+        gertler_widgets = ["m1", "r0", "r1", "cp", "l2d"]
+        dragon_widgets = ["HULL_WIDTH", "HULL_HEIGHT", "BOTTOM_FLATNESS"]
+
         for k in gertler_widgets:
-            self.inputs[k].setVisible(not is_naca)
+            if k in self.inputs: self.inputs[k].setVisible(not is_naca and not is_dragon)
 
-        # Hide Presets for NACA
-        self.preset_combo.setVisible(not is_naca)
-        self.preset_label.setVisible(not is_naca)
+        for k in dragon_widgets:
+            if k in self.inputs: self.inputs[k].setVisible(is_dragon)
 
-        # Refresh auto-calculation in case values changed context
-        self._auto_update_props()
+        self.preset_combo.setVisible(not is_naca and not is_dragon)
+        self.preset_label.setVisible(not is_naca and not is_dragon)
 
     def setup_aerostat_tab(self):
         self.aerostat_tab = QWidget()
@@ -726,6 +736,18 @@ class AirshipGUI(QMainWindow):
         self.length_box.setHidden(not is_standard)
         self.volume_box.setHidden(not (is_vol or is_balloon))
         self.appendages_box.setHidden(is_balloon) # Hide the wing toggle in balloon mode
+
+        # --- FIX: Toggle Output Tab Panels based on Mode ---
+        if hasattr(self, 'aero_analysis_group'):
+            # Show graphs and CSV button only in Aerostat Mode
+            self.aero_analysis_group.setVisible(is_aero)
+            self.btn_csv.setVisible(is_aero)
+
+            # Hide 3D Viewer, Added Mass Matrix, and 2D Plot button in Aerostat Mode
+            self.preview_group.setVisible(not is_aero)
+            self.matrix_group.setVisible(not is_aero)
+            self.btn_plot.setVisible(not is_aero)
+        # ---------------------------------------------------
 
         # Update available tabs
         curr = self.tab_widget.currentIndex()
@@ -1237,12 +1259,19 @@ class AirshipGUI(QMainWindow):
             "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
             "FATIGUE_FACTOR", "UV_DEGRADATION", "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
             "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
-            "WING_THICKNESS", "WING_AXIAL_OFFSET"
+            "WING_THICKNESS", "WING_AXIAL_OFFSET",
+            "HULL_WIDTH", "HULL_HEIGHT" # Added Dragon Dream variables
         ]
 
         for key in all_keys:
             if key in self.inputs:
                 p[key] = self.inputs[key].get_value()
+
+        # Handle flatness percentage conversion safely
+        if "BOTTOM_FLATNESS" in self.inputs:
+            p["BOTTOM_FLATNESS"] = self.inputs["BOTTOM_FLATNESS"].get_value() / 100.0
+        else:
+            p["BOTTOM_FLATNESS"] = 0.25
 
         p["MATERIAL_CLASS"] = self.inputs["MATERIAL_CLASS"].currentText()
         p["INCLUDE_TETHER"] = self.inputs["INCLUDE_TETHER"].isChecked()
@@ -1255,9 +1284,9 @@ class AirshipGUI(QMainWindow):
         p["LOBE_NUMBER"] = self.lobe_button_group.checkedId()
         p["FINAL_OBJECT_NAME"] = self.inputs["FINAL_OBJECT_NAME"].text()
         p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
-        p["ENVELOPE_PARAMS"] = (p["m1"], p["r0"], p["r1"], p["cp"], p["l2d"])
+        p["ENVELOPE_PARAMS"] = (p.get("m1", 0), p.get("r0", 0), p.get("r1", 0), p.get("cp", 0), p.get("l2d", 0))
 
-        # --- NEW: CAPTURE WING TOGGLE ---
+        # --- CAPTURE WING TOGGLE ---
         if "INCLUDE_WINGS" in self.inputs:
             p["INCLUDE_WINGS"] = self.inputs["INCLUDE_WINGS"].isChecked()
         else:
@@ -1290,7 +1319,7 @@ class AirshipGUI(QMainWindow):
 
         # Handle Volumetric scaling for geometry definition
         if self.mode_button_group.checkedId() == 2:
-            from geometry_handler import GertlerEnvelope, NACAEnvelope
+            from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope
 
             if p["ENVELOPE_SERIES"] == "NACA":
                 temp_env = NACAEnvelope.from_parameters((p["l2d"],), 1, int(p["ENVELOPE_RESOLUTION"]))
@@ -1299,18 +1328,24 @@ class AirshipGUI(QMainWindow):
                     p["LOBE_NUMBER"],
                     p["LOBE_OFFSET_X"], p["LOBE_OFFSET_Y"], p["LOBE_OFFSET_Z"]
                 )
-            else:
+                p["ENVELOPE_LENGTH"] = temp_env.length
+                self.inputs["ENVELOPE_LENGTH"].set_value(temp_env.length)
+
+            elif p["ENVELOPE_SERIES"] == "GERTLER":
                 temp_env = GertlerEnvelope.from_parameters_volume(
                     p["ENVELOPE_PARAMS"], self.inputs["VOLUME"].get_value(),
                     int(p["ENVELOPE_RESOLUTION"]), p["LOBE_NUMBER"],
                     p["LOBE_OFFSET_X"], p["LOBE_OFFSET_Y"], p["LOBE_OFFSET_Z"]
                 )
+                p["ENVELOPE_LENGTH"] = temp_env.length
+                self.inputs["ENVELOPE_LENGTH"].set_value(temp_env.length)
 
-            p["ENVELOPE_LENGTH"] = temp_env.length
-            self.inputs["ENVELOPE_LENGTH"].set_value(temp_env.length)
+            elif p["ENVELOPE_SERIES"] == "DRAGON_DREAM":
+                # Tri-axial scaling logic. If you implement set_volume for DragonDream in the future, it goes here.
+                pass
 
-        # Determine Fin axial position based on length
-        hull_len = p["ENVELOPE_LENGTH"]
+                # Determine Fin axial position based on length
+        hull_len = p.get("ENVELOPE_LENGTH", 100)
         req_le = (p.get("FIN_AXIAL_OFFSET", 80) / 100.0) * hull_len
         max_le = hull_len - p.get("FIN_RC_LENGTH", 15) - 0.5
         p["FIN_AXIAL_OFFSET"] = min(req_le, max_le)
