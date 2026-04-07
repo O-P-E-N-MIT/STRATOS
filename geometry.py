@@ -43,8 +43,8 @@ class AirshipGeometry:
 
         script_content = ["# INPUT PARAMETERS START"]
 
-        # Handle Volumetric Dimensioning
-        if "VOLUME" in self.params:
+        # Handle Volumetric Dimensioning (for Revolved Profiles)
+        if "VOLUME" in self.params and self.params.get("ENVELOPE_SERIES") != "DRAGON_DREAM":
             self.params["ENVELOPE_LENGTH"] = GertlerEnvelope.from_parameters_volume(
                 self.params["ENVELOPE_PARAMS"],
                 self.params["VOLUME"],
@@ -57,10 +57,18 @@ class AirshipGeometry:
 
         # Set default values for Salome script injection
         self.params.setdefault("ENVELOPE_TRUNCATION_RATIO", 0)
-        self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params["ENVELOPE_PARAMS"])
-        self.params.setdefault("CENTRAL_LOBE_LENGTH", self.params["ENVELOPE_LENGTH"])
+
+        # Use .get() inside .setdefault() to ensure we don't trigger KeyError if ENVELOPE_PARAMS isn't available
+        self.params.setdefault("CENTRAL_LOBE_PARAMS", self.params.get("ENVELOPE_PARAMS", (0.5, 0.5, 0.5, 0.66, 1.0)))
+        self.params.setdefault("CENTRAL_LOBE_LENGTH", self.params.get("ENVELOPE_LENGTH", 100))
         self.params.setdefault("INCLUDE_FINS", True)
-        self.params.setdefault("INCLUDE_WINGS", False) # <-- REQUIRED FOR SALOME
+        self.params.setdefault("INCLUDE_WINGS", False)
+
+        # --- DRAGON DREAM SAFEGUARDS ---
+        self.params.setdefault("HULL_WIDTH", 29.5)
+        self.params.setdefault("HULL_HEIGHT", 14.0)
+        self.params.setdefault("BOTTOM_FLATNESS", 0.25)
+        # -------------------------------
 
         for key, value in self.params.items():
             if isinstance(value, str):
