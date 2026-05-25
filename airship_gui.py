@@ -358,7 +358,7 @@ class AirshipGUI(QMainWindow):
         self.inputs["HULL_HEIGHT"] = LabeledSlider("Max Height (H)", 5.0, 100.0, 14.0, 0.1, 2)
         self.inputs["BOTTOM_FLATNESS"] = LabeledSlider("Bottom Flatness %", 0.0, 100.0, 25.0, 1.0, 0)
 
-# Add them to the layout (cl)
+        # Add them to the layout (cl)
         cl.addWidget(self.inputs["HULL_WIDTH"], 5, 0)
         cl.addWidget(self.inputs["HULL_HEIGHT"], 5, 1)
         cl.addWidget(self.inputs["BOTTOM_FLATNESS"], 6, 0)
@@ -764,7 +764,7 @@ class AirshipGUI(QMainWindow):
             self.log.append(f"[ERROR] Plot failed: {e}")
 
     def _update_series_visibility(self):
-        """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA)."""
+        """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA/Dragon Dream)."""
         series = self.inputs["ENVELOPE_SERIES"].currentText()
         is_naca = series == "NACA"
         is_dragon = series == "DRAGON_DREAM"
@@ -780,6 +780,10 @@ class AirshipGUI(QMainWindow):
 
         self.preset_combo.setVisible(not is_naca and not is_dragon)
         self.preset_label.setVisible(not is_naca and not is_dragon)
+
+        # --- NEW: Disable the 2D Petal Plot button for Dragon Dream ---
+        if hasattr(self, 'btn_plot'):
+            self.btn_plot.setEnabled(not is_dragon)
 
     def setup_aerostat_tab(self):
         self.aerostat_tab = QWidget()
