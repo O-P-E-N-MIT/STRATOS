@@ -372,11 +372,14 @@ try:
     OUTPUT_FILE_COMPLETE = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}.{OUTPUT_FORMAT.lower()}")
     OUTPUT_FILE_LOBES = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}_lobes.{OUTPUT_FORMAT.lower()}")
 
+    # ALWAYS export an STL for the PyVista UI preview to read
+    OUTPUT_FILE_PREVIEW_STL = os.path.join(OUTPUT_DIRECTORY, f"{FINAL_OBJECT_NAME}.stl")
+    geompy.ExportSTL(Final_Airship_Solid, OUTPUT_FILE_PREVIEW_STL, False)
+
     print(f'[LOG] Attempting to export to {OUTPUT_FILE_COMPLETE}...')
     sys.stdout.flush()
 
     if OUTPUT_FORMAT == 'STL':
-        geompy.ExportSTL(Final_Airship_Solid, OUTPUT_FILE_COMPLETE, False)
         geompy.ExportSTL(Final_Lobes_Solid, OUTPUT_FILE_LOBES, False)
     elif OUTPUT_FORMAT == 'BREP':
         geompy.ExportBREP(Final_Airship_Solid, OUTPUT_FILE_COMPLETE)
