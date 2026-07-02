@@ -77,7 +77,7 @@ STRATOS is driven by an intuitive tabbed interface. A standard workflow looks li
 5. **Generate & Export:** Go to the **Output** tab, set your project name, choose your export format (STL, STEP, BREP), and click **RUN GENERATION**. View the 3D solid result directly in the built-in PyVista viewer, alongside the computed 6x6 added mass matrix!
 
 ## 📑 Cite As
-> Pedapudi Anantha Hari Arun, Sudarsan D. Naidu, Pranav Mittal, and Manikandan Murugaiah "STRATOS: Software-based Tool for Rapid Airship Translation & Optimized Shaping", https://github.com/O-P-E-N-MIT/Airship-Geometric-Modelling
+> Pedapudi Anantha Hari Arun, Sudarsan D. Naidu, Pranav Mittal, and Manikandan Murugaiah "STRATOS: Software-based Tool for Rapid Airship Translation & Optimized Shaping", [https://github.com/O-P-E-N-MIT/STRATOS](https://github.com/O-P-E-N-MIT/STRATOS)
 
 ## 📄 License
 This project is distributed under the MIT License. See the `LICENSE` file for more information.
