@@ -1,5 +1,5 @@
 # STRATOS
-**S**oftware-based **T**ool for **R**apid **A**irship **T**ranslation & **O**ptimized **S**haping
+**S**oftware-based **T**ool for **R**apid **A**irship **T**ransformation & **O**ptimized **S**haping
 
 STRATOS is a comprehensive, open-source Python framework featuring a graphical user interface designed for the rapid parametric modeling, aerodynamic evaluation, and structural analysis of Lighter-Than-Air (LTA) platforms. 
 
