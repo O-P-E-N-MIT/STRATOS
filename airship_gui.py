@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QComboBox, QSlider, QGroupBox, QFileDialog, QTextEdit,
     QButtonGroup, QCheckBox, QMessageBox, QSplitter, QTableWidget,
-    QTableWidgetItem, QHeaderView, QScrollArea, QSizePolicy, QListWidget, QInputDialog
+    QTableWidgetItem, QHeaderView, QScrollArea, QSizePolicy, QListWidget, QInputDialog,QStackedWidget
 )
 from pyvistaqt import BackgroundPlotter
 from airfoil import get_airfoil_points, scan_airfoil_directory
@@ -231,6 +231,16 @@ class AirshipGUI(QMainWindow):
         self.status_logger = StatusLogger()
         self.status_logger.message_logged.connect(self._append_to_log)
         sys.stdout = self.status_logger
+
+    def _plot_page_prev(self):
+        self.plot_stack.setCurrentIndex(0)
+        self.btn_plot_prev.setEnabled(False)
+        self.btn_plot_next.setEnabled(True)
+
+    def _plot_page_next(self):
+        self.plot_stack.setCurrentIndex(1)
+        self.btn_plot_prev.setEnabled(True)
+        self.btn_plot_next.setEnabled(False)
 
     def _on_tab_changed(self, index):
         """Refreshes navigation and attempts to load existing mesh on Output tab."""
@@ -872,10 +882,12 @@ class AirshipGUI(QMainWindow):
         self.inputs["GAS_CONSTANT"] = LabeledSlider("Gas Constant (He=2077)", 200, 4200, 2077, 1, 0)
         self.inputs["DELTA_P"] = LabeledSlider("Delta P (Pa)", 0, 1000, 500, 1, 0)
         self.inputs["DELTA_T"] = LabeledSlider("Delta T (K)", 0, 20, 5, 0.1, 1)
+        self.inputs["GAS_GAMMA"] = LabeledSlider("Adiabatic Index (\u03B3)", 1.0, 2.0, 1.667, 0.001, 3)
         gl.addWidget(self.inputs["GAS_PURITY"], 0, 0)
         gl.addWidget(self.inputs["GAS_CONSTANT"], 0, 1)
         gl.addWidget(self.inputs["DELTA_P"], 1, 0)
         gl.addWidget(self.inputs["DELTA_T"], 1, 1)
+        gl.addWidget(self.inputs["GAS_GAMMA"], 2, 0) # Added to grid
         layout.addWidget(gas_grp)
 
         # 3. Ballonet Configuration
@@ -933,10 +945,12 @@ class AirshipGUI(QMainWindow):
         self.inputs["WIND_SPEED"] = LabeledSlider("Wind Speed (m/s)", 0, 50, 5, 1, 0)
         self.inputs["EMISSIVITY"] = LabeledSlider("Emissivity", 0.0, 1.0, 0.8, 0.01, 2)
         self.inputs["ABSORPTIVITY"] = LabeledSlider("Absorptivity", 0.0, 1.0, 0.3, 0.01, 2)
-
-        # --- NEW UI ELEMENTS ---
         self.inputs["FATIGUE_FACTOR"] = LabeledSlider("Fatigue Factor/Yr", 0.8, 1.0, 0.995, 0.001, 3)
         self.inputs["UV_DEGRADATION"] = LabeledSlider("UV Degrade/Yr", 0.0, 0.2, 0.02, 0.001, 3)
+
+        # --- NEW PARAMETERS: Earth Temp & Albedo ---
+        self.inputs["EARTH_TEMP"] = LabeledSlider("Earth Temp (K)", 200.0, 350.0, 288.15, 0.1, 2)
+        self.inputs["ALBEDO"] = LabeledSlider("Albedo (0-1)", 0.0, 1.0, 0.2, 0.01, 2)
 
         tl.addWidget(QLabel("Envelope Material:"), 0, 0)
         tl.addWidget(self.inputs["MATERIAL_CLASS"], 0, 1)
@@ -945,8 +959,10 @@ class AirshipGUI(QMainWindow):
         tl.addWidget(self.inputs["WIND_SPEED"], 2, 0)
         tl.addWidget(self.inputs["EMISSIVITY"], 2, 1)
         tl.addWidget(self.inputs["ABSORPTIVITY"], 3, 0)
-        tl.addWidget(self.inputs["FATIGUE_FACTOR"], 3, 1) # Added to grid
-        tl.addWidget(self.inputs["UV_DEGRADATION"], 4, 0) # Added to grid
+        tl.addWidget(self.inputs["FATIGUE_FACTOR"], 3, 1)
+        tl.addWidget(self.inputs["UV_DEGRADATION"], 4, 0)
+        tl.addWidget(self.inputs["EARTH_TEMP"], 4, 1) # Added to grid
+        tl.addWidget(self.inputs["ALBEDO"], 5, 0)     # Added to grid
         layout.addWidget(thermal_grp)
 
         layout.addStretch()
@@ -1185,9 +1201,54 @@ class AirshipGUI(QMainWindow):
         self.aero_analysis_group = QGroupBox("Aerostat Performance Analysis")
         self.aero_analysis_group.hide()
         aero_vbox = QVBoxLayout(self.aero_analysis_group)
-        self.fig = Figure(facecolor='#1e1e1e', tight_layout=True)
-        self.canvas = FigureCanvas(self.fig)
-        aero_vbox.addWidget(self.canvas)
+
+        # --- NEW: Grid layout for overlaying buttons directly on top of plots ---
+        overlay_layout = QGridLayout()
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.plot_stack = QStackedWidget()
+
+        # Tile 1: First 6 plots
+        self.fig1 = Figure(facecolor='#1e1e1e', tight_layout=True)
+        self.canvas1 = FigureCanvas(self.fig1)
+        self.plot_stack.addWidget(self.canvas1)
+
+        # Tile 2: Remaining 1 plot
+        self.fig2 = Figure(facecolor='#1e1e1e', tight_layout=True)
+        self.canvas2 = FigureCanvas(self.fig2)
+        self.plot_stack.addWidget(self.canvas2)
+
+        # Left Arrow Button - Floating Overlay
+        self.btn_plot_prev = QPushButton("<")
+        self.btn_plot_prev.setFixedSize(40, 80)
+        self.btn_plot_prev.setCursor(Qt.PointingHandCursor)
+        self.btn_plot_prev.setStyleSheet("""
+            QPushButton { background-color: transparent; color: transparent; font-size: 24px; font-weight: bold; border: none; }
+            QPushButton:hover { background-color: rgba(45, 45, 45, 200); color: #00BFFF; border-radius: 5px; }
+            QPushButton:disabled { color: transparent; background-color: transparent; }
+        """)
+
+        # Right Arrow Button - Floating Overlay
+        self.btn_plot_next = QPushButton(">")
+        self.btn_plot_next.setFixedSize(40, 80)
+        self.btn_plot_next.setCursor(Qt.PointingHandCursor)
+        self.btn_plot_next.setStyleSheet("""
+            QPushButton { background-color: transparent; color: transparent; font-size: 24px; font-weight: bold; border: none; }
+            QPushButton:hover { background-color: rgba(45, 45, 45, 200); color: #00BFFF; border-radius: 5px; }
+            QPushButton:disabled { color: transparent; background-color: transparent; }
+        """)
+
+        self.btn_plot_prev.setEnabled(False) # Start on Tile 1
+
+        self.btn_plot_prev.clicked.connect(self._plot_page_prev)
+        self.btn_plot_next.clicked.connect(self._plot_page_next)
+
+        # Stack the widgets in the exact same cell (0, 0)
+        overlay_layout.addWidget(self.plot_stack, 0, 0)
+        overlay_layout.addWidget(self.btn_plot_prev, 0, 0, alignment=Qt.AlignLeft | Qt.AlignVCenter)
+        overlay_layout.addWidget(self.btn_plot_next, 0, 0, alignment=Qt.AlignRight | Qt.AlignVCenter)
+
+        aero_vbox.addLayout(overlay_layout)
         self.right_layout.addWidget(self.aero_analysis_group)
 
         self.preview_group = QGroupBox("3D Model Preview")
@@ -1277,6 +1338,9 @@ class AirshipGUI(QMainWindow):
                 delta_P=p["DELTA_P"],
                 delta_T=p["DELTA_T"],
                 gas_constant=p["GAS_CONSTANT"],
+                gamma=p.get("GAS_GAMMA", 1.667),
+                albedo=p.get("ALBEDO", 0.2),
+                earth_temperature=p.get("EARTH_TEMP", 288.15),
                 lobe_number=p["LOBE_NUMBER"],
                 e=p["LOBE_OFFSET_X"], f=p["LOBE_OFFSET_Y"], g=p["LOBE_OFFSET_Z"],
                 ballonet_number=int(p["BALLONET_NUMBER"]),
@@ -1318,7 +1382,7 @@ class AirshipGUI(QMainWindow):
             burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
 
             # 4. Get performance arrays
-            h, Ln, Lg, I, BV, sigma, vol, surf_area = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+            h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
 
             operational_index = np.searchsorted(h, ahull.operational_altitude)
 
@@ -1410,7 +1474,7 @@ class AirshipGUI(QMainWindow):
             lifespan_strength = mat["base_strength"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
 
             # Store the expanded data and update 6-panel plots
-            self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength)
+            self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g)
             self.update_aero_plots(*self.last_aero_data)
 
             self.log.append(f"[SUCCESS] Design parameters calculated for {ahull.envelope.length:.3f}m hull.")
@@ -1530,16 +1594,19 @@ class AirshipGUI(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export Performance Data", "", "CSV Files (*.csv)")
         if path:
             import csv
-            h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength = self.last_aero_data
+            # --- UPDATED UNPACKING ---
+            h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g = self.last_aero_data
             try:
                 with open(path, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([
                         "Altitude (m)", "Net Lift (N)", "Gross Lift (N)",
                         "Inflation (%)", "Ballonet (m3)", "Stress (MPa)",
-                        "Time (Years)", "Lifespan Strength (MPa)"
+                        "Time (Years)", "Lifespan Strength (MPa)",
+                        "T_Upper (K)", "T_Lower (K)", "T_Gas (K)" # <-- ADDED HEADERS
                     ])
-                    for row in zip(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength):
+                    # --- UPDATED ZIP ---
+                    for row in zip(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g):
                         writer.writerow(row)
                 self.log.append(f"[SUCCESS] Exported to: {path}")
             except Exception as e:
@@ -1565,8 +1632,7 @@ class AirshipGUI(QMainWindow):
             "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
             "FATIGUE_FACTOR", "UV_DEGRADATION", "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
             "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
-            "WING_THICKNESS", "WING_AXIAL_OFFSET",
-            "HULL_WIDTH", "HULL_HEIGHT" # Added Dragon Dream variables
+            "WING_THICKNESS", "WING_AXIAL_OFFSET", "HULL_WIDTH", "HULL_HEIGHT", "GAS_GAMMA", "EARTH_TEMP", "ALBEDO"
         ]
 
         for key in all_keys:
@@ -1744,23 +1810,48 @@ class AirshipGUI(QMainWindow):
 
         self.thread.start()
 
-    def update_aero_plots(self, h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength):
-        """Updates the performance graphs using a 2x3 grid."""
-        self.fig.clear()
+    def update_aero_plots(self, h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g):
+        """Updates the performance graphs using a 6-and-1 split tiled layout."""
+        self.fig1.clear()
+        self.fig2.clear()
 
-        # Bundle data for dynamic plotting: (x_data, y_data, Title, X-Label, Color)
+        # Bundle data for dynamic plotting.
         datasets = [
             (h, Ln, "Net Static Lift (N)", "Altitude (m)", "#00BFFF"),
             (h, Lg, "Gross Static Lift (N)", "Altitude (m)", "#00FF00"),
             (h, I * 100, "Inflation Fraction (%)", "Altitude (m)", "#FF4500"),
             (h, BV, "Ballonet Volume (m³)", "Altitude (m)", "#DA70D6"),
             (h, sigma, "Total Envelope Stress (MPa)", "Altitude (m)", "#FFD700"),
-            (t_years, lifespan_strength, "Material Lifespan (MPa)", "Time (Years)", "#FF6347")
+            (t_years, lifespan_strength, "Material Lifespan (MPa)", "Time (Years)", "#FF6347"),
+            (h, [
+                (T_u, 'Upper Surface', '#FF4500'),
+                (T_l, 'Lower Surface', '#00BFFF'),
+                (T_g, 'Lifting Gas', '#32CD32')
+            ], "Thermal Profile (K)", "Altitude (m)", None)
         ]
 
-        for i, (x, y, title, xlabel, color) in enumerate(datasets):
-            ax = self.fig.add_subplot(2, 3, i + 1)
-            ax.plot(x, y, color=color, linewidth=1.5)
+        for i, data in enumerate(datasets):
+            # Route the first 6 plots to Tile 1 (3x2 grid), and the last 1 to Tile 2 (1x1 grid)
+            if i < 6:
+                ax = self.fig1.add_subplot(2, 3, i + 1)
+            else:
+                ax = self.fig2.add_subplot(1, 1, 1)
+
+            x_data = data[0]
+            y_data = data[1]
+            title = data[2]
+            xlabel = data[3]
+
+            if isinstance(y_data, list):
+                for y_arr, label, color in y_data:
+                    ax.plot(x_data, y_arr, color=color, linewidth=1.5, label=label)
+                legend = ax.legend(facecolor='#2D2D2D', edgecolor='#3c3c3c', fontsize=7)
+                for text in legend.get_texts():
+                    text.set_color('white')
+            else:
+                color = data[4]
+                ax.plot(x_data, y_data, color=color, linewidth=1.5)
+
             ax.set_title(title, color='#00BFFF', fontsize=10, fontweight='bold')
             ax.set_xlabel(xlabel, color='white', fontsize=8)
             ax.tick_params(colors='white', labelsize=8)
@@ -1769,8 +1860,10 @@ class AirshipGUI(QMainWindow):
             for spine in ax.spines.values():
                 spine.set_color('#3c3c3c')
 
-        self.fig.tight_layout()
-        self.canvas.draw()
+        self.fig1.tight_layout()
+        self.fig2.tight_layout()
+        self.canvas1.draw()
+        self.canvas2.draw()
 
     def on_worker_finished(self, result):
         matrix, stl_path = result
@@ -1923,9 +2016,11 @@ class AirshipGUI(QMainWindow):
                 for key in self.prop_outputs: self.prop_outputs[key].setText("0.0000")
                 self.matrix_table.clearContents()
                 self.plotter.clear()
-                if hasattr(self, 'fig'):
-                    self.fig.clear()
-                    self.canvas.draw()
+                if hasattr(self, 'fig1'):
+                    self.fig1.clear()
+                    self.canvas1.draw()
+                    self.fig2.clear()
+                    self.canvas2.draw()
                 self.inputs["COMPUTE_ADDED_MASS"].setChecked(True)
 
         finally:
