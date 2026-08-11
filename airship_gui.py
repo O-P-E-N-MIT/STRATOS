@@ -1474,7 +1474,8 @@ class AirshipGUI(QMainWindow):
             lifespan_strength = mat["base_strength"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
 
             # Store the expanded data and update 6-panel plots
-            self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g)
+            self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l)
+
             self.update_aero_plots(*self.last_aero_data)
 
             self.log.append(f"[SUCCESS] Design parameters calculated for {ahull.envelope.length:.3f}m hull.")
@@ -1595,7 +1596,7 @@ class AirshipGUI(QMainWindow):
         if path:
             import csv
             # --- UPDATED UNPACKING ---
-            h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g = self.last_aero_data
+            h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l = self.last_aero_data
             try:
                 with open(path, 'w', newline='') as f:
                     writer = csv.writer(f)
@@ -1606,7 +1607,7 @@ class AirshipGUI(QMainWindow):
                         "T_Upper (K)", "T_Lower (K)", "T_Gas (K)" # <-- ADDED HEADERS
                     ])
                     # --- UPDATED ZIP ---
-                    for row in zip(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g):
+                    for row in zip(h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l):
                         writer.writerow(row)
                 self.log.append(f"[SUCCESS] Exported to: {path}")
             except Exception as e:
@@ -1810,7 +1811,7 @@ class AirshipGUI(QMainWindow):
 
         self.thread.start()
 
-    def update_aero_plots(self, h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_u, T_l, T_g):
+    def update_aero_plots(self, h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l):
         """Updates the performance graphs using a 6-and-1 split tiled layout."""
         self.fig1.clear()
         self.fig2.clear()

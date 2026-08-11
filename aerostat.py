@@ -1,11 +1,11 @@
 import numpy as np
-from scipy.optimize import minimize_scalar, fsolve
+from scipy.optimize import minimize_scalar, fsolve, least_squares
 
 # The ISA atmospheric model used here is modelled only for Troposphere and Tropopause which is enough for our case.
 T0 = 288.15             # Ground Temperature
 P0 = 101325             # Ground Pressure
 rho0 = 1.225            # Ground Density
-ag = 9.80665            # Acceleration due to gravity at sea level
+ag = 9.80665             # Acceleration due to gravity at sea level
 R  = 287                # Universal gas constant for air
 RE = 6371e3             # Relative Humidity
 K = rho0 * ag * T0/P0   # Aerostatic lift constant
@@ -110,61 +110,6 @@ def get_gas_mass (
     # Returns the lifting gas mass and the ballonet mass
     return rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume
 
-def get_gas_mixture_properties (purity, gas_constant_pure, gamma_pure, T):
-    # Properties of air
-    R_air = 287.05
-    cp_air = 1005.0
-    mu_air = 1.458e-6 * (T**1.5) / (T + 110.4)  # Sutherland's law for viscosity
-    k_air = 0.024 * (T / 293.15)**0.8           # Thermal conductivity variation with temperature.
-
-    # Properties of pure gas
-    cp_pure = (gamma_pure / (gamma_pure - 1.0)) * gas_constant_pure
-    
-    # NOTE: These are rough placeholders for Helium at standard conditions scaled by temp.
-    mu_pure = 1.9e-5 * (T / 293.15)**0.7 
-    k_pure = 0.15 * (T / 293.15)**0.7
-
-    # Mixture properties based on linear blending of properties.
-    cp_mix = purity * cp_pure + (1 - purity) * cp_air
-    mu_mix = purity * mu_pure + (1 - purity) * mu_air
-    k_mix = purity * k_pure + (1 - purity) * k_air
-    R_mix = purity * gas_constant_pure + (1 - purity) * R_air
-
-    return cp_mix, mu_mix, k_mix, R_mix
-
-def calculate_convection_coefficients (v_wind, d, T_a, T_env, T_g, P, delta_P, purity, gas_constant_pure, gamma_pure):
-    # External convection from wind speed
-    _, mu_a, k_a, R_a = get_gas_mixture_properties(0.0, 287.05, 1.4, T_a) # Purity 0 = 100% Air
-    cp_a = 1005.0
-    
-    rho_a = P / (R_a * T_a)
-    nu_a = mu_a / rho_a
-    beta_a = 1.0 / T_a
-    Pr_a = (cp_a * mu_a) / k_a
-
-    # Forced convection
-    if v_wind > 0:
-        Re_a = (rho_a * v_wind * d) / mu_a
-        h_o = (k_a / d) * Re_a * Pr_a * (0.2275 / (np.log10(Re_a)**2.584) - 850.0 / Re_a) 
-
-    # Free convection
-    else:
-        Gr_a = (ag * beta_a * abs(T_a - T_env) * d**3) / (nu_a**2)
-        h_o = (k_a / d) * (0.6 + 0.387 * ((Gr_a * Pr_a) / (1.0 + (0.559 / Pr_a)**(9/16))**(16/9))**(1/6))**2 
-
-    # Internal convection within the gas mixture
-    cp_g, mu_g, k_g, R_mix = get_gas_mixture_properties(purity, gas_constant_pure, gamma_pure, T_g)
-
-    rho_g = (P + delta_P) / (R_mix * T_g)
-    nu_g = mu_g / rho_g
-    beta_g = 1.0 / T_g
-    Pr_g = (cp_g * mu_g) / k_g
-
-    Gr_g = (ag * beta_g * abs(T_g - T_env) * d**3) / (nu_g**2)
-    h_i = 0.13 * (k_g / d) * (Gr_g * Pr_g)**0.33
-
-    return h_o, h_i
-
 def get_thermal_model (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
     h_conv = 10.45 - wind_speed + 10.0 * np.sqrt(wind_speed)
     q_solar = solar_flux * absorptivity
@@ -172,63 +117,6 @@ def get_thermal_model (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
     T_env = T_amb + (q_solar - q_ir) / max(h_conv, 1e-3)
 
     return T_env
-
-def solve_steady_state (
-        surface_area, 
-        projected_area, 
-        skin_density, m_g, 
-        cp_e, # Heat capacity of envelope
-        cp_g, # Heat capacity of gases
-        alpha_f, 
-        eps_f, 
-        I_n, 
-        albedo,
-        T_a, 
-        T_e, 
-        h_o, 
-        h_i, 
-        T_guess=None
-):
-    T_bb = 0.052 * T_a ** 1.5
-
-    # Assuming symmetry which is not true for non-axisymmetric shapes or trilobe configuration with a z offset.
-    A_u = surface_area/2
-    A_l = surface_area/2
-
-    m_u = A_u * skin_density
-    m_l = A_l * skin_density
-
-
-    Qd_u = alpha_f * I_n * projected_area
-    Qd_l = alpha_f * I_n * albedo * projected_area
-    Qsky_u_const = eps_f * A_u * SIGMA * T_bb ** 4
-    Qsky_l_const = eps_f * A_l * SIGMA * T_bb ** 4
-    Qearth_l_const = eps_f * A_l * SIGMA * T_e ** 4
-
-    def rhs(T):
-        T_g, T_u, T_l = T
-
-        IR_l_to_u = eps_f * A_u * SIGMA * (T_l**4 - T_u**4)
-        IR_u_to_l = eps_f * A_l * SIGMA * (T_u**4 - T_l**4)
-
-        Q_sky_u = Qsky_u_const - eps_f * A_u * SIGMA * T_u**4
-        Q_sky_l = Qsky_l_const - eps_f * A_l * SIGMA * T_l**4
-
-        Q_earth_l = Qearth_l_const
-
-        Q_cv_a_u = h_o * A_u * (T_a - T_u)
-        Q_cv_a_l = h_o * A_l * (T_a - T_l)
-
-        Q_cv_g_u = h_i * A_u * (T_g - T_u)
-        Q_cv_g_l = h_i * A_l * (T_g - T_l)
-
-        dTu = (Qd_u + IR_l_to_u + Q_sky_u + Q_cv_a_u + Q_cv_g_u) / (m_u * cp_e)
-        dTl = (Qd_l + IR_u_to_l + Q_sky_l + Q_cv_a_l + Q_cv_g_l + Q_earth_l) / (m_l * cp_e)
-        dTg = (-Q_cv_g_u - Q_cv_g_l) / (m_g * cp_g)
-
-        return np.array([dTg, dTu, dTl])
-
-    return fsolve(rhs, T_guess or [T_a, T_a, T_a])
 
 # Main class to perform all calculations for the Aerostat.
 class AerostatHull:
@@ -342,18 +230,14 @@ class AerostatHull:
             self.wing_mass = wing_vol * wing_density
 
     def get_properties (self, n=None, include_tether=True):
-        # If number of points to be taken for altitude is not given,
-        # it would be assumed to be taken for every 100m.
         if n is None:
             n = int((self.pressure_altitude - self.deployment_altitude) / 100)
 
         h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
 
-        # Correctly extract offsets and gas properties from the class instance
         e, f, g = self.multi_lobe_distances
         RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
 
-        # Retrieve atmospheric properties at all altitudes in h
         P, T = get_atmospheric_properties(h)
         e_vap = get_vapour_pressure(T, RH)
         rho = P / (R * T)
@@ -371,74 +255,58 @@ class AerostatHull:
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
             projected_area = self.envelope.top_projected_area_trilobe(e, f, g)
 
-        # If there are ballonets, the inflation fraction will vary with altitude
         if self.has_ballonets:
             I = self.inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
             I = np.clip(I, 0, 1)
-        # If there are no ballonets, the inflation fraction is always 1
         else:
             I = np.full_like(P, 1)
 
-        # Calculate tether mass only if included by the user
         current_tether_mass = (self.tether_density * h) if include_tether else 0
 
-        # Ballonet mass in the envelope.
         ballonet_mass = self.ballonet_fabric_mass * volume**(2/3)
 
         total_mass = (self.skin_density * surface_area +
                       self.additional_mass +
                       self.fin_mass +
                       self.wing_mass +
-                      current_tether_mass +                 # Conditionally applied tether weight
+                      current_tether_mass +                
                       ballonet_mass)
 
-        # Total ballonet volume varying with altitude
         BV = (1 - I) * volume
 
         rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
         rho_ba = rho
 
-        # Gross static lift
         Lg = K * volume * (P - (1-RDWV)*e_vap) / T
 
-        # Net static lift calculation
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
-        # Properties of air
-        mu = 1.458e-6 * (T**1.5) / (T + 110.4)  # Sutherland's law for viscosity
-        k = 0.024 * (T / 293.15)**0.8           # Thermal conductivity variation with temperature.
+        mu = 1.458e-6 * (T**1.5) / (T + 110.4)  
+        k = 0.024 * (T / 293.15)**0.8           
         
-        # Properties of pure gas
-        # NOTE: Temperature variations for mu and k are placeholders. Right now, they are for Helium at standard conditions scaled by temp.
         cp_lg = (self.gamma / (self.gamma - 1.0)) * gas_constant
         mu_lg = 1.9e-5 * (T / 293.15)**0.7 
         k_lg = 0.15 * (T / 293.15)**0.7
         
-        # Mixture properties based on linear blending of properties.
         cp_mix = purity * cp_lg + (1 - purity) * CP
         mu_mix = purity * mu_lg + (1 - purity) * mu
         k_mix = purity * k_lg + (1 - purity) * k
         R_mix = purity * gas_constant + (1 - purity) * R
 
-        # Convection coefficient due to atmosphere.
         nu = mu / rho
         Pr = (CP * mu) / k
         D = self.envelope.diameter
         
-        # Forced convection
         if self.wind_speed > 0:
             Re = (rho * self.wind_speed) / mu
             h_o = (k / D) * Re * Pr * (0.2275 / (np.log10(Re)**2.584) - 850.0 / Re) 
         
-        # Free convection
         else:
             Gr_a = (ag * (1/T) * abs(T - T_env) * D**3) / (nu**2)
             h_o = (k / D) * (0.6 + 0.387 * ((Gr_a * Pr) / (1.0 + (0.559 / Pr)**(9/16))**(16/9))**(1/6))**2 
 
-        # Constants required for thermal modelling
         T_bb = 0.052 * T ** 1.5
         
-        # Assuming symmetry which is not true for non-axisymmetric shapes or trilobe configuration with a z offset.
         A = surface_area / 2
         m = A * self.skin_density
         
@@ -447,62 +315,124 @@ class AerostatHull:
         Qsky_u_const = self.emissivity * A * SIGMA * T_bb ** 4
         Qsky_l_const = self.emissivity * A * SIGMA * T_bb ** 4
         Qearth_l_const = self.emissivity * A * SIGMA * self.earth_temperature ** 4
-        
-        def steady_thermal_all(T_vars_flat):
-            # Unpack the 1D array back into three arrays of size n
-            T_g, T_u, T_l = T_vars_flat.reshape(3, n)
-            
-            # Vectorized gas properties calculations
-            rho_g = P / (R_mix * T_g)
-            nu_g = mu_mix / rho_g
-            beta_g = 1.0 / T_g
-            Pr_g = (cp_mix * mu_mix) / k_mix
-            
-            T_env_avg = (T_u + T_l) / 2
-            Gr_g = (ag * beta_g * np.abs(T_g - T_env_avg) * D**3) / (nu_g**2 + 1e-12)
-            h_i = 0.13 * (k_mix / D) * np.abs(Gr_g * Pr_g)**0.33
-            
-            # Vectorized radiation and convection
-            IR_l_to_u = self.emissivity * A * SIGMA * (T_l**4 - T_u**4)
-            IR_u_to_l = self.emissivity * A * SIGMA * (T_u**4 - T_l**4)
-            
-            Q_sky_u = Qsky_u_const - self.emissivity * A * SIGMA * T_u**4
-            Q_sky_l = Qsky_l_const - self.emissivity * A * SIGMA * T_l**4
-            
-            Q_cv_a_u = h_o * A * (T - T_u)
-            Q_cv_a_l = h_o * A * (T - T_l)
-            
-            Q_cv_g_u = h_i * A * (T_g - T_u)
-            Q_cv_g_l = h_i * A * (T_g - T_l)
-            
-            # Energy balances
-            dTu = Qd_u + IR_l_to_u + Q_sky_u + Q_cv_a_u + Q_cv_g_u
-            dTl = Qd_l + IR_u_to_l + Q_sky_l + Q_cv_a_l + Q_cv_g_l + Qearth_l_const
-            dTg = -Q_cv_g_u - Q_cv_g_l
-            
-            # Flatten the residuals back into a 1D array for fsolve
-            return np.concatenate([dTg, dTu, dTl])
 
-        # Initial guess: ambient temperature for all nodes at all altitudes
-        initial_guess = np.concatenate([T, T, T])
-        
-        # Solve the massive system all at once
-        from scipy.optimize import fsolve
-        sol = fsolve(steady_thermal_all, initial_guess)
-        
-        # Unpack the solution back into your altitude arrays
-        T_g, T_u, T_l = sol.reshape(3, n)
+        T_g = np.zeros(n)
+        T_u = np.zeros(n)
+        T_l = np.zeros(n)
 
-        # Temperature of the envelope.
+        # Physically sensible temperature bounds (K) the solver may not
+        # leave. Wide enough to comfortably contain any realistic
+        # atmosphere/envelope/gas temperature at any altitude modelled here.
+        T_LOW, T_HIGH = 100.0, 400.0
+
+        current_guess = np.clip(np.array([T[0], T[0], T[0]]), T_LOW, T_HIGH)
+
+        for i in range(n):
+            Qd_u_i = Qd_u[i] if isinstance(Qd_u, np.ndarray) else Qd_u
+            Qd_l_i = Qd_l[i] if isinstance(Qd_l, np.ndarray) else Qd_l
+            Qsky_u_const_i = Qsky_u_const[i] if isinstance(Qsky_u_const, np.ndarray) else Qsky_u_const
+            Qsky_l_const_i = Qsky_l_const[i] if isinstance(Qsky_l_const, np.ndarray) else Qsky_l_const
+            Qearth_l_const_i = Qearth_l_const[i] if isinstance(Qearth_l_const, np.ndarray) else Qearth_l_const
+
+            # Characteristic energy scale (W) used to normalise the residual
+            # vector to O(1) so all three equations are comparably weighted
+            # for the solver, regardless of vehicle size/altitude.
+            residual_scale = max(h_o[i] * A, 1.0)
+
+            def steady_thermal_single(T_vars):
+                T_g_var, T_u_var, T_l_var = T_vars
+
+                rho_g = P[i] / (R_mix * T_g_var)
+                nu_g = mu_mix[i] / rho_g
+                beta_g = 1.0 / T_g_var
+                Pr_g = (cp_mix * mu_mix[i]) / k_mix[i]
+
+                Gr_g_u = (ag * beta_g * np.abs(T_g_var - T_u_var) * D**3) / (nu_g**2 + 1e-12)
+                Gr_g_l = (ag * beta_g * np.abs(T_g_var - T_l_var) * D**3) / (nu_g**2 + 1e-12)
+                h_i_u = 0.13 * (k_mix[i] / D) * np.abs(Gr_g_u * Pr_g)**0.33
+                h_i_l = 0.13 * (k_mix[i] / D) * np.abs(Gr_g_l * Pr_g)**0.33
+
+                # Infrared emissivity
+                IR_l_to_u = self.emissivity * A * SIGMA * (T_l_var**4 - T_u_var**4)
+                IR_u_to_l = self.emissivity * A * SIGMA * (T_u_var**4 - T_l_var**4)
+
+                # Black body radiation.
+                Q_sky_u = Qsky_u_const_i - self.emissivity * A * SIGMA * T_u_var**4
+                Q_sky_l = Qsky_l_const_i - self.emissivity * A * SIGMA * T_l_var**4
+
+                # Natural convection from atmosphere.
+                Q_cv_a_u = h_o[i] * A * (T[i] - T_u_var)
+                Q_cv_a_l = h_o[i] * A * (T[i] - T_l_var)
+
+                # Internal convection from the lifting gas.
+                Q_cv_g_u = h_i_u * A * (T_g_var - T_u_var)
+                Q_cv_g_l = h_i_l * A * (T_g_var - T_l_var)
+
+                # dTu = Qd_u_i + IR_l_to_u + Q_sky_u + Q_cv_a_u + Q_cv_g_u
+                # dTl = Qd_l_i + IR_u_to_l + Q_sky_l + Q_cv_a_l + Q_cv_g_l + Qearth_l_const_i
+                # dTg = -Q_cv_g_u - Q_cv_g_l
+
+                dTu = Q_cv_a_u + Q_cv_g_u + Q_sky_u + IR_l_to_u + Qd_u_i
+                dTl = Q_cv_a_l + Q_cv_g_l + Q_sky_l + IR_u_to_l + Qd_l_i + Qearth_l_const_i
+                dTg = -Q_cv_g_u - Q_cv_g_l
+
+                return np.array([dTg, dTu, dTl]) / residual_scale
+
+            result = least_squares(
+                steady_thermal_single,
+                current_guess,
+                bounds=(T_LOW, T_HIGH),
+                method='trf',
+                xtol=1e-12,
+                ftol=1e-12,
+                gtol=1e-12,
+                max_nfev=2000,
+            )
+
+            sol = result.x
+            # Check if the optimizer succeeded AND the residuals are practically zero
+            converged = result.success and np.max(np.abs(result.fun)) < 1e-6
+
+            if not converged:
+                print('Not converged: ', h[i], result.success)
+                retry_guess = np.clip(np.array([T[i], T[i], T[i]]), T_LOW, T_HIGH)
+                retry = least_squares(
+                    steady_thermal_single,
+                    retry_guess,
+                    bounds=(T_LOW, T_HIGH),
+                    method='trf',
+                    xtol=1e-12,
+                    ftol=1e-12,
+                    gtol=1e-12,
+                    max_nfev=5000,
+                )
+
+                
+                # If the retry yielded a smaller residual, use it
+                if np.max(np.abs(retry.fun)) < np.max(np.abs(result.fun)):
+                    result = retry
+                    sol = result.x
+
+                T_g[i], T_u[i], T_l[i] = sol
+                current_guess = sol
+
+                break
+                
+            else:
+                print('Converged: ', h[i])
+
+            T_g[i], T_u[i], T_l[i] = sol
+            current_guess = sol
+
+            # break
+
         T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
         
-        # Total stress acting on the envelope skin due to both thermal and pressure effects (in MPa).
         sigma = (
-            self.cte * (T_env - T) * self.base_strength                             # Thermal stress on the envelope
-            + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   # Hoop stress from the pressure difference
+            self.cte * (T_env - T) * self.base_strength                                 
+            + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   
         )
 
-        # Temperature derating on material strength.
         derating = np.full_like(T_env, 1)
         derating_mask = T_env > 293.15
         derating[derating_mask] = np.maximum(0, 1 - (T_env[derating_mask] - 293.15) * self.temp_derating / 100)
