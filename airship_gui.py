@@ -1318,10 +1318,10 @@ class AirshipGUI(QMainWindow):
 
             # Map UI Material dropdown to physical properties natively
             MATERIAL_PROPS = {
-                "Standard": {"cte": 2.3e-5, "base_strength": 75.0, "temp_derating": 0.15},
-                "High temperature": {"cte": 1.5e-5, "base_strength": 90.0, "temp_derating": 0.05},
-                "Cold temperature": {"cte": 3.0e-5, "base_strength": 60.0, "temp_derating": 0.20},
-                "Extreme environment": {"cte": 1.0e-5, "base_strength": 120.0, "temp_derating": 0.01}
+                "Standard": {"cte": 2.3e-5, "elastic_modulus": 75.0, "temp_derating": 0.15},
+                "High temperature": {"cte": 1.5e-5, "elastic_modulus": 90.0, "temp_derating": 0.05},
+                "Cold temperature": {"cte": 3.0e-5, "elastic_modulus": 60.0, "temp_derating": 0.20},
+                "Extreme environment": {"cte": 1.0e-5, "elastic_modulus": 120.0, "temp_derating": 0.01}
             }
             mat = MATERIAL_PROPS[p["MATERIAL_CLASS"]]
 
@@ -1366,7 +1366,7 @@ class AirshipGUI(QMainWindow):
                 # ----------------------------
 
                 cte=mat["cte"],
-                base_strength=mat["base_strength"],
+                elastic_modulus=mat["elastic_modulus"],
                 temp_derating=mat["temp_derating"],
                 solar_flux=p["SOLAR_FLUX"],
                 emissivity=p["EMISSIVITY"],
@@ -1382,7 +1382,14 @@ class AirshipGUI(QMainWindow):
             burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
 
             # 4. Get performance arrays
-            h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+            h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area, burst_altitude, converged = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+
+            if converged:
+                print("[INFO] Thermal model solver converged successfully.")
+            else:
+                print("[ERROR] Thermal model solver convergence failed.")
+
+            print(burst_altitude)
 
             operational_index = np.searchsorted(h, ahull.operational_altitude)
 
@@ -1428,8 +1435,8 @@ class AirshipGUI(QMainWindow):
             ballonet_radius = (3 * v_per_ballonet / (4 * np.pi)) ** (1/3)
 
             op_stress = sigma[operational_index]
-            allowable_stress = mat["base_strength"] / p["SAFETY_FACTOR"]
-            safety_factor = mat["base_strength"] / np.max(sigma)
+            allowable_stress = mat["elastic_modulus"] / p["SAFETY_FACTOR"]
+            safety_factor = mat["elastic_modulus"] / np.max(sigma)
 
             print("  ")
             print("================ DESIGN PARAMETERS ===============")
@@ -1471,7 +1478,9 @@ class AirshipGUI(QMainWindow):
             # --- INDEPENDENT MATERIAL LIFESPAN CALCULATION ---
             # Projecting strength decay over 10 years based on fatigue and UV
             t_years = np.linspace(0, 10, len(h))
-            lifespan_strength = mat["base_strength"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
+
+            # Fix this
+            lifespan_strength = mat["elastic_modulus"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
 
             # Store the expanded data and update 6-panel plots
             self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l)
