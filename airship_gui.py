@@ -887,7 +887,7 @@ class AirshipGUI(QMainWindow):
         gl.addWidget(self.inputs["GAS_CONSTANT"], 0, 1)
         gl.addWidget(self.inputs["DELTA_P"], 1, 0)
         gl.addWidget(self.inputs["DELTA_T"], 1, 1)
-        gl.addWidget(self.inputs["GAS_GAMMA"], 2, 0) # Added to grid
+        gl.addWidget(self.inputs["GAS_GAMMA"], 2, 0)
         layout.addWidget(gas_grp)
 
         # 3. Ballonet Configuration
@@ -923,6 +923,8 @@ class AirshipGUI(QMainWindow):
         self.inputs["OPTIMIZE_LENGTH"] = QCheckBox("OPTIMIZE LENGTH FOR TARGET LIFT")
         self.inputs["OPTIMIZE_LENGTH"].setChecked(True)
         self.inputs["OPTIMIZE_LENGTH"].setFont(QFont("Arial", 10, QFont.Bold))
+        # Dim the Target Net Lift slider if Optimize Length is unchecked
+        self.inputs["OPTIMIZE_LENGTH"].toggled.connect(lambda checked: self.inputs["TARGET_NET_LIFT"].setEnabled(checked))
 
         ml.addWidget(self.inputs["SKIN_DENSITY"], 0, 0)
         ml.addWidget(self.inputs["PAYLOAD_MASS"], 0, 1)
@@ -937,8 +939,12 @@ class AirshipGUI(QMainWindow):
         # 5. Thermal & Stress Analysis Inputs
         thermal_grp = QGroupBox("Thermal & Stress Analysis")
         tl = QGridLayout(thermal_grp)
-        self.inputs["MATERIAL_CLASS"] = QComboBox()
-        self.inputs["MATERIAL_CLASS"].addItems(["Standard", "High temperature", "Cold temperature", "Extreme environment"])
+
+        # New direct inputs for material properties
+        self.inputs["CTE"] = LabeledSlider("CTE (x10^-5 /K)", 0.1, 10.0, 2.3, 0.1, 2)
+        self.inputs["ELASTIC_MODULUS"] = LabeledSlider("Elastic Modulus (MPa)", 10.0, 500.0, 75.0, 1.0, 1)
+        self.inputs["STRENGTH"] = LabeledSlider("Strength (MPa)", 10.0, 500.0, 75.0, 1.0, 1)
+        self.inputs["TEMP_DERATING"] = LabeledSlider("Temp Derating (%/K)", 0.0, 1.0, 0.15, 0.01, 2)
 
         self.inputs["SAFETY_FACTOR"] = LabeledSlider("Safety Factor", 1.0, 10.0, 4.0, 0.1, 1)
         self.inputs["SOLAR_FLUX"] = LabeledSlider("Solar Flux (W/m²)", 0, 2000, 1000, 10, 0)
@@ -947,22 +953,22 @@ class AirshipGUI(QMainWindow):
         self.inputs["ABSORPTIVITY"] = LabeledSlider("Absorptivity", 0.0, 1.0, 0.3, 0.01, 2)
         self.inputs["FATIGUE_FACTOR"] = LabeledSlider("Fatigue Factor/Yr", 0.8, 1.0, 0.995, 0.001, 3)
         self.inputs["UV_DEGRADATION"] = LabeledSlider("UV Degrade/Yr", 0.0, 0.2, 0.02, 0.001, 3)
-
-        # --- NEW PARAMETERS: Earth Temp & Albedo ---
         self.inputs["EARTH_TEMP"] = LabeledSlider("Earth Temp (K)", 200.0, 350.0, 288.15, 0.1, 2)
         self.inputs["ALBEDO"] = LabeledSlider("Albedo (0-1)", 0.0, 1.0, 0.2, 0.01, 2)
 
-        tl.addWidget(QLabel("Envelope Material:"), 0, 0)
-        tl.addWidget(self.inputs["MATERIAL_CLASS"], 0, 1)
-        tl.addWidget(self.inputs["SAFETY_FACTOR"], 1, 0)
-        tl.addWidget(self.inputs["SOLAR_FLUX"], 1, 1)
-        tl.addWidget(self.inputs["WIND_SPEED"], 2, 0)
-        tl.addWidget(self.inputs["EMISSIVITY"], 2, 1)
-        tl.addWidget(self.inputs["ABSORPTIVITY"], 3, 0)
-        tl.addWidget(self.inputs["FATIGUE_FACTOR"], 3, 1)
-        tl.addWidget(self.inputs["UV_DEGRADATION"], 4, 0)
-        tl.addWidget(self.inputs["EARTH_TEMP"], 4, 1) # Added to grid
-        tl.addWidget(self.inputs["ALBEDO"], 5, 0)     # Added to grid
+        tl.addWidget(self.inputs["CTE"], 0, 0)
+        tl.addWidget(self.inputs["ELASTIC_MODULUS"], 0, 1)
+        tl.addWidget(self.inputs["STRENGTH"], 1, 0)
+        tl.addWidget(self.inputs["TEMP_DERATING"], 1, 1)
+        tl.addWidget(self.inputs["SAFETY_FACTOR"], 2, 0)
+        tl.addWidget(self.inputs["SOLAR_FLUX"], 2, 1)
+        tl.addWidget(self.inputs["WIND_SPEED"], 3, 0)
+        tl.addWidget(self.inputs["EMISSIVITY"], 3, 1)
+        tl.addWidget(self.inputs["ABSORPTIVITY"], 4, 0)
+        tl.addWidget(self.inputs["FATIGUE_FACTOR"], 4, 1)
+        tl.addWidget(self.inputs["UV_DEGRADATION"], 5, 0)
+        tl.addWidget(self.inputs["EARTH_TEMP"], 5, 1)
+        tl.addWidget(self.inputs["ALBEDO"], 6, 0)
         layout.addWidget(thermal_grp)
 
         layout.addStretch()
@@ -1316,15 +1322,6 @@ class AirshipGUI(QMainWindow):
             else:
                 resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
 
-            # Map UI Material dropdown to physical properties natively
-            MATERIAL_PROPS = {
-                "Standard": {"cte": 2.3e-5, "elastic_modulus": 75.0, "temp_derating": 0.15},
-                "High temperature": {"cte": 1.5e-5, "elastic_modulus": 90.0, "temp_derating": 0.05},
-                "Cold temperature": {"cte": 3.0e-5, "elastic_modulus": 60.0, "temp_derating": 0.20},
-                "Extreme environment": {"cte": 1.0e-5, "elastic_modulus": 120.0, "temp_derating": 0.01}
-            }
-            mat = MATERIAL_PROPS[p["MATERIAL_CLASS"]]
-
             ahull = AerostatHull(
                 envelope=resolved_env,
                 skin_density=p["SKIN_DENSITY"],
@@ -1354,20 +1351,18 @@ class AirshipGUI(QMainWindow):
                 fin_thickness=p.get("FIN_THICKNESS", 0),
                 fin_number=p.get("FIN_NUMBER", 4),
                 fin_density=p.get("FIN_DENSITY", 10.0),
-
-                # --- NEW: Wing Parameters ---
                 has_wings=p.get("INCLUDE_WINGS", False),
-                # Dynamically extract span and chords from the first and last stations in the table
                 wing_span=(p.get("WING_STATIONS", [{}])[-1].get('y', 0) * 2) if p.get("WING_STATIONS") else 0,
                 wing_root_chord=p.get("WING_STATIONS", [{}])[0].get('chord', 0),
                 wing_tip_chord=p.get("WING_STATIONS", [{}])[-1].get('chord', 0),
                 wing_thickness=p.get("WING_THICKNESS", 0),
-                wing_density=p.get("FIN_DENSITY", 10.0), # Reuses fin density for structural consistency
-                # ----------------------------
+                wing_density=p.get("FIN_DENSITY", 10.0),
 
-                cte=mat["cte"],
-                elastic_modulus=mat["elastic_modulus"],
-                temp_derating=mat["temp_derating"],
+                cte=p["CTE"] * 1e-5,
+                elastic_modulus=p["ELASTIC_MODULUS"],
+                strength=p["STRENGTH"],
+                temp_derating=p["TEMP_DERATING"],
+
                 solar_flux=p["SOLAR_FLUX"],
                 emissivity=p["EMISSIVITY"],
                 absorptivity=p["ABSORPTIVITY"],
@@ -1381,7 +1376,6 @@ class AirshipGUI(QMainWindow):
 
             burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
 
-            # 4. Get performance arrays
             h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area, burst_altitude, converged = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
 
             if converged:
@@ -1402,13 +1396,11 @@ class AirshipGUI(QMainWindow):
             tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
             gas_mass_op = get_gas_mass(P_op, T_op, vol, *ahull.gas_properties)
 
-            # --- NEW: PIECEWISE WING STRUCTURAL MASS OVERRIDE ---
             if p.get("INCLUDE_WINGS", False) and p.get("WING_STATIONS"):
                 stations = p["WING_STATIONS"]
                 t_frac = p.get("WING_THICKNESS", 12.0) / 100.0
                 density = p.get("FIN_DENSITY", 10.0)
 
-                # A standard airfoil cross-sectional area is approx 0.685 * thickness * chord^2
                 k_area = 0.685
                 single_wing_vol = 0.0
 
@@ -1417,17 +1409,11 @@ class AirshipGUI(QMainWindow):
                     c1 = stations[i]['chord']
                     c2 = stations[i+1]['chord']
 
-                    # Exact geometric integration of the chord squared over the span segment (Frustum volume)
                     segment_vol = k_area * t_frac * (dy / 3.0) * (c1**2 + c1*c2 + c2**2)
                     single_wing_vol += segment_vol
 
-                ahull.wing_mass = 2 * single_wing_vol * density # Account for both Left and Right wings
-            # ----------------------------------------------------
+                ahull.wing_mass = 2 * single_wing_vol * density
 
-            # --- UPDATED Total Mass Calculation ---
-            total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.wing_mass + ahull.additional_mass + gas_mass_op
-
-            # --- UPDATED Total Mass Calculation ---
             total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.wing_mass + ahull.additional_mass + gas_mass_op
 
             v_ballonet_total = BV[operational_index]
@@ -1435,8 +1421,8 @@ class AirshipGUI(QMainWindow):
             ballonet_radius = (3 * v_per_ballonet / (4 * np.pi)) ** (1/3)
 
             op_stress = sigma[operational_index]
-            allowable_stress = mat["elastic_modulus"] / p["SAFETY_FACTOR"]
-            safety_factor = mat["elastic_modulus"] / np.max(sigma)
+            allowable_stress = p["STRENGTH"] / p["SAFETY_FACTOR"]
+            actual_safety_factor = p["STRENGTH"] / np.max(sigma)
 
             print("  ")
             print("================ DESIGN PARAMETERS ===============")
@@ -1467,22 +1453,17 @@ class AirshipGUI(QMainWindow):
             print(f"Inflation Fraction @ Dep. Alt.:     {ahull.inflation_fraction_deploy*100:.2f} %\n")
 
             print("------------ STRESS & THERMAL ANALYSIS -----------")
-            # print(f"Material Selected:                {p['MATERIAL_CLASS']}")
             print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
             print(f"Estimated Burst Altitude:           {burst_alt:.2f} m")
             print(f"Total Combined Stress:              {op_stress:.2f} MPa")
             print(f"Allowable Stress:                   {allowable_stress:.2f} MPa")
-            print(f"Safety Factor:                      {safety_factor:.2f}")
+            print(f"Safety Factor:                      {actual_safety_factor:.2f}")
             print("="*50 + "\n")
 
-            # --- INDEPENDENT MATERIAL LIFESPAN CALCULATION ---
-            # Projecting strength decay over 10 years based on fatigue and UV
             t_years = np.linspace(0, 10, len(h))
 
-            # Fix this
-            lifespan_strength = mat["elastic_modulus"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
+            lifespan_strength = p["STRENGTH"] * (p["FATIGUE_FACTOR"] ** t_years) * (1 - p["UV_DEGRADATION"] * t_years)
 
-            # Store the expanded data and update 6-panel plots
             self.last_aero_data = (h, Ln, Lg, I, BV, sigma, t_years, lifespan_strength, T_g, T_u, T_l)
 
             self.update_aero_plots(*self.last_aero_data)
@@ -1642,7 +1623,8 @@ class AirshipGUI(QMainWindow):
             "SOLAR_FLUX", "WIND_SPEED", "EMISSIVITY", "ABSORPTIVITY",
             "FATIGUE_FACTOR", "UV_DEGRADATION", "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
             "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
-            "WING_THICKNESS", "WING_AXIAL_OFFSET", "HULL_WIDTH", "HULL_HEIGHT", "GAS_GAMMA", "EARTH_TEMP", "ALBEDO"
+            "WING_THICKNESS", "WING_AXIAL_OFFSET", "HULL_WIDTH", "HULL_HEIGHT", "GAS_GAMMA", "EARTH_TEMP", "ALBEDO",
+            "CTE", "ELASTIC_MODULUS", "STRENGTH", "TEMP_DERATING" # Added the new direct inputs
         ]
 
         for key in all_keys:
@@ -1655,7 +1637,6 @@ class AirshipGUI(QMainWindow):
         else:
             p["BOTTOM_FLATNESS"] = 0.25
 
-        p["MATERIAL_CLASS"] = self.inputs["MATERIAL_CLASS"].currentText()
         p["INCLUDE_TETHER"] = self.inputs["INCLUDE_TETHER"].isChecked()
         p["BALLONET_SHAPE"] = self.inputs["BALLONET_SHAPE"].currentText()
         p["N_PETALS"] = self.inputs["N_PETALS"].get_value()
@@ -1668,12 +1649,6 @@ class AirshipGUI(QMainWindow):
         p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
         p["ENVELOPE_PARAMS"] = (p.get("m1", 0), p.get("r0", 0), p.get("r1", 0), p.get("cp", 0), p.get("l2d", 0))
 
-        # --- CAPTURE WING TOGGLE ---
-        if "INCLUDE_WINGS" in self.inputs:
-            p["INCLUDE_WINGS"] = self.inputs["INCLUDE_WINGS"].isChecked()
-        else:
-            p["INCLUDE_WINGS"] = False
-
         # --- CAPTURE WING TOGGLE & STATIONS ---
         p["INCLUDE_WINGS"] = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked()
 
@@ -1683,8 +1658,6 @@ class AirshipGUI(QMainWindow):
                 airfoils_x = []
                 airfoils_y = []
 
-                # --- NEW: FORCE UNIFORM WING RESOLUTION ---
-                # Read the resolution from the Root airfoil, fallback to 100
                 global_wing_res = 100
                 if hasattr(self, 'airfoil_library'):
                     root_combo = self.wing_table.cellWidget(0, 5)
@@ -1704,11 +1677,8 @@ class AirshipGUI(QMainWindow):
 
                     stations.append({'y': y_val, 'chord': chord, 'twist': twist, 'x_off': x_off, 'z_off': z_off})
 
-                    # Read the exact pre-configured properties from the Asset Manager
                     if af_name and hasattr(self, 'airfoil_library') and af_name in self.airfoil_library:
                         af_data = self.airfoil_library[af_name]
-
-                        # --- NEW: Override individual res with global_wing_res ---
                         res, scale = global_wing_res, af_data["scale"]
                         trans, rot = (af_data["tx"], af_data["ty"]), af_data["rot"]
 
@@ -1718,12 +1688,11 @@ class AirshipGUI(QMainWindow):
                         else:
                             x_pts, y_pts = get_airfoil_points(thickness=af_data["thickness"], resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
                     else:
-                        # Absolute fallback
                         x_pts, y_pts = get_airfoil_points(thickness=12.0, resolution=100, scale_factor=1.0)
 
                     airfoils_x.append(x_pts.tolist() if hasattr(x_pts, 'tolist') else list(x_pts))
                     airfoils_y.append(y_pts.tolist() if hasattr(y_pts, 'tolist') else list(y_pts))
-                # Package the compiled arrays directly into the parameter dictionary
+
                 p["WING_STATIONS"] = stations
                 p["WING_AIRFOILS_X"] = airfoils_x
                 p["WING_AIRFOILS_Y"] = airfoils_y
@@ -1732,10 +1701,8 @@ class AirshipGUI(QMainWindow):
                 self.log.append(f"[ERROR] Failed to compile wing stations: {e}")
                 return None
 
-        # Capture Profile Series
         p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
 
-        # Handle Volumetric scaling for geometry definition
         if self.mode_button_group.checkedId() == 2:
             from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope
 
@@ -1759,10 +1726,8 @@ class AirshipGUI(QMainWindow):
                 self.inputs["ENVELOPE_LENGTH"].set_value(temp_env.length)
 
             elif p["ENVELOPE_SERIES"] == "DRAGON_DREAM":
-                # Tri-axial scaling logic. If you implement set_volume for DragonDream in the future, it goes here.
                 pass
 
-                # Determine Fin axial position based on length
         hull_len = p.get("ENVELOPE_LENGTH", 100)
         req_le = (p.get("FIN_AXIAL_OFFSET", 80) / 100.0) * hull_len
         max_le = hull_len - p.get("FIN_RC_LENGTH", 15) - 0.5
