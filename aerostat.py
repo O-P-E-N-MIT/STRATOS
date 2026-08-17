@@ -395,13 +395,20 @@ class AerostatHull:
             if not converged:
                 break
 
-        T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
+        # T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
         
+        # sigma = (
+        #     self.cte * (T_env - T) * self.elastic_modulus                                 
+        #     + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   
+        # )
+
         sigma = (
-            self.cte * (T_env - T) * self.elastic_modulus                                 
+            self.cte * np.abs(T_u - T_l) * self.elastic_modulus / 2                                
             + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   
         )
 
+        T_env = (T_u + T_l) / 2
+        
         derating = np.full_like(T_env, 1)
         derating_mask = T_env > 293.15
         derating[derating_mask] = np.maximum(0, 1 - (T_env[derating_mask] - 293.15) * self.temp_derating / 100)

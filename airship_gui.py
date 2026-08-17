@@ -1383,8 +1383,6 @@ class AirshipGUI(QMainWindow):
             else:
                 print("[ERROR] Thermal model solver convergence failed.")
 
-            print(burst_altitude)
-
             operational_index = np.searchsorted(h, ahull.operational_altitude)
 
             P_op, T_op = get_atmospheric_properties(ahull.operational_altitude)
