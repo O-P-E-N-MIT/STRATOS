@@ -883,11 +883,15 @@ class AirshipGUI(QMainWindow):
         self.inputs["DELTA_P"] = LabeledSlider("Delta P (Pa)", 0, 1000, 500, 1, 0)
         self.inputs["DELTA_T"] = LabeledSlider("Delta T (K)", 0, 20, 5, 0.1, 1)
         self.inputs["GAS_GAMMA"] = LabeledSlider("Adiabatic Index (\u03B3)", 1.0, 2.0, 1.667, 0.001, 3)
+        self.inputs["CALC_DELTA_T"] = QCheckBox("Calculate delta T from thermal model")
+        self.inputs["CALC_DELTA_T"].setChecked(False)
+        self.inputs["CALC_DELTA_T"].toggled.connect(lambda checked: self.inputs["DELTA_T"].setEnabled(not checked))
         gl.addWidget(self.inputs["GAS_PURITY"], 0, 0)
         gl.addWidget(self.inputs["GAS_CONSTANT"], 0, 1)
         gl.addWidget(self.inputs["DELTA_P"], 1, 0)
         gl.addWidget(self.inputs["DELTA_T"], 1, 1)
         gl.addWidget(self.inputs["GAS_GAMMA"], 2, 0)
+        gl.addWidget(self.inputs["CALC_DELTA_T"], 2, 1)
         layout.addWidget(gas_grp)
 
         # 3. Ballonet Configuration
@@ -1626,6 +1630,10 @@ class AirshipGUI(QMainWindow):
         for key in all_keys:
             if key in self.inputs:
                 p[key] = self.inputs[key].get_value()
+
+        # --- NEW DELTA_T OVERRIDE LOGIC ---
+        if self.inputs.get("CALC_DELTA_T") and self.inputs["CALC_DELTA_T"].isChecked():
+            p["DELTA_T"] = None
 
         # Handle flatness percentage conversion safely
         if "BOTTOM_FLATNESS" in self.inputs:
