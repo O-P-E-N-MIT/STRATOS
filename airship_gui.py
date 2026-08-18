@@ -1374,14 +1374,12 @@ class AirshipGUI(QMainWindow):
                 optimized_env, convergence_error = ahull.initialise_from_operational_altitude([1.0, 1e10], target_lift=target_lift)
                 self.log.append(f"[INFO] Optimized Length: {optimized_env.length:.3f} m\n")
 
-            burst_alt = ahull.get_burst_altitude(safety_factor=p["SAFETY_FACTOR"])
-
-            h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area, burst_altitude, converged = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"])
+            h, Ln, Lg, I, BV, T_g, T_u, T_l, sigma, vol, surf_area, burst_alt, converged = ahull.get_properties(n=100, include_tether=p["INCLUDE_TETHER"], safety_factor=p["SAFETY_FACTOR"])
 
             if converged:
-                print("[INFO] Thermal model solver converged successfully.")
+                print("[INFO] Thermal model solver converged successfully.\n")
             else:
-                print("[ERROR] Thermal model solver convergence failed.")
+                print("[ERROR] Thermal model solver convergence failed.\n")
 
             operational_index = np.searchsorted(h, ahull.operational_altitude)
 
@@ -1452,7 +1450,7 @@ class AirshipGUI(QMainWindow):
 
             print("------------ STRESS & THERMAL ANALYSIS -----------")
             print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
-            print(f"Estimated Burst Altitude:           {burst_alt:.2f} m")
+            print(f"Estimated Burst Altitude:           {">" if burst_alt == p["OPERATIONAL_HEIGHT"] + p["MARGIN_HEIGHT"] else ""}{burst_alt:.2f} m")
             print(f"Total Combined Stress:              {op_stress:.2f} MPa")
             print(f"Allowable Stress:                   {allowable_stress:.2f} MPa")
             print(f"Safety Factor:                      {actual_safety_factor:.2f}")

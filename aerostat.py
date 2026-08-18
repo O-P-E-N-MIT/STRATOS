@@ -265,12 +265,6 @@ class AerostatHull:
             surface_area = self.envelope.surface_area_trilobe(e, f, g)
             projected_area = self.envelope.top_projected_area_trilobe(e, f, g)
 
-        if self.has_ballonets:
-            I = self.inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
-            I = np.clip(I, 0, 1)
-        else:
-            I = np.full_like(P, 1)
-
         current_tether_mass = (self.tether_density * h) if include_tether else 0
         ballonet_mass = self.ballonet_fabric_mass * volume**(2/3)
         total_mass = (self.skin_density * surface_area +
@@ -278,15 +272,7 @@ class AerostatHull:
                       self.fin_mass +
                       self.wing_mass +
                       current_tether_mass +                
-                      ballonet_mass)
-
-        BV = (1 - I) * volume
-
-        rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
-        rho_ba = rho
-
-        Lg = K * volume * (P - (1-RDWV)*e_vap) / T
-        Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag   
+                      ballonet_mass) 
 
         # NOTE: These formulae are only valid for Helium lifting gas.
         cp_lg = (self.gamma / (self.gamma - 1.0)) * gas_constant
@@ -394,6 +380,22 @@ class AerostatHull:
 
             if not converged:
                 break
+
+        T_star = T_g if delta_T == None else (T + delta_T)
+
+        if self.has_ballonets:
+            I = self.inflation_fraction_factor * (T_star / (P + delta_P))
+            I = np.clip(I, 0, 1)
+        else:
+            I = np.full_like(P, 1)
+        
+        BV = (1 - I) * volume
+
+        rho_lg = purity * (P + delta_P) / (gas_constant * T_star)
+        rho_ba = rho
+        
+        Lg = K * volume * (P - (1-RDWV)*e_vap) / T
+        Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
         # T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
         
