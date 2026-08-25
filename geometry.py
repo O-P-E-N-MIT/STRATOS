@@ -187,43 +187,43 @@ class AirshipGeometry:
                                         envelope.top_projected_area_trilobe(e, f, g), envelope.side_projected_area_trilobe(e, f, g),
                                         envelope.cv_trilobe(e, f, g))
 
-        # 2. Add Fin Contributions (if enabled)
-        if self.params.get("INCLUDE_FINS", True):
-            n_fins = self.params.get("FIN_NUMBER", 4)
-            rc = self.params.get("FIN_RC_LENGTH", 0)
-            h = self.params.get("FIN_HEIGHT", 0)
-            taper = self.params.get("FIN_TAPER_RATIO", 1)
-            thick_ratio = self.params.get("FIN_THICKNESS", 0) / 100.0
+        # # 2. Add Fin Contributions (if enabled)
+        # if self.params.get("INCLUDE_FINS", True):
+        #     n_fins = self.params.get("FIN_NUMBER", 4)
+        #     rc = self.params.get("FIN_RC_LENGTH", 0)
+        #     h = self.params.get("FIN_HEIGHT", 0)
+        #     taper = self.params.get("FIN_TAPER_RATIO", 1)
+        #     thick_ratio = self.params.get("FIN_THICKNESS", 0) / 100.0
 
-            fin_planform_area = 0.5 * (rc + rc * taper) * h
-            surf += (2 * fin_planform_area * n_fins)
-            fin_vol = fin_planform_area * (rc * thick_ratio)
-            vol += (fin_vol * n_fins)
-            side += (fin_planform_area * 2)
-            top += (fin_planform_area * 2)
+        #     fin_planform_area = 0.5 * (rc + rc * taper) * h
+        #     surf += (2 * fin_planform_area * n_fins)
+        #     fin_vol = fin_planform_area * (rc * thick_ratio)
+        #     vol += (fin_vol * n_fins)
+        #     side += (fin_planform_area * 2)
+        #     top += (fin_planform_area * 2)
 
-        # 3. Add Wing Contributions (if enabled)
-        if self.params.get("INCLUDE_WINGS", False):
-            span = self.params.get("WING_SPAN", 20.0)
-            cr = self.params.get("WING_ROOT_CHORD", 5.0)
-            ct = self.params.get("WING_TIP_CHORD", 2.0)
-            thick_ratio = self.params.get("WING_THICKNESS", 12.0) / 100.0
-            dihedral_deg = self.params.get("WING_DIHEDRAL", 5.0)
+        # # 3. Add Wing Contributions (if enabled)
+        # if self.params.get("INCLUDE_WINGS", False):
+        #     span = self.params.get("WING_SPAN", 20.0)
+        #     cr = self.params.get("WING_ROOT_CHORD", 5.0)
+        #     ct = self.params.get("WING_TIP_CHORD", 2.0)
+        #     thick_ratio = self.params.get("WING_THICKNESS", 12.0) / 100.0
+        #     dihedral_deg = self.params.get("WING_DIHEDRAL", 5.0)
 
-            # Calculate true physical span accounting for dihedral stretch
-            import math
-            dihedral_rad = math.radians(dihedral_deg)
-            true_span = span / math.cos(dihedral_rad) if math.cos(dihedral_rad) != 0 else span
+        #     # Calculate true physical span accounting for dihedral stretch
+        #     import math
+        #     dihedral_rad = math.radians(dihedral_deg)
+        #     true_span = span / math.cos(dihedral_rad) if math.cos(dihedral_rad) != 0 else span
 
-            total_wing_planform_area = 0.5 * (cr + ct) * true_span
-            surf += (2 * total_wing_planform_area)
+        #     total_wing_planform_area = 0.5 * (cr + ct) * true_span
+        #     surf += (2 * total_wing_planform_area)
 
-            avg_chord = (cr + ct) / 2
-            wing_vol = total_wing_planform_area * (avg_chord * thick_ratio)
-            vol += wing_vol
+        #     avg_chord = (cr + ct) / 2
+        #     wing_vol = total_wing_planform_area * (avg_chord * thick_ratio)
+        #     vol += wing_vol
 
-            top += 0.5 * (cr + ct) * span
-            side += (cr * thick_ratio * span * 0.1) + (true_span * math.sin(dihedral_rad) * avg_chord * 0.5)
+        #     top += 0.5 * (cr + ct) * span
+        #     side += (cr * thick_ratio * span * 0.1) + (true_span * math.sin(dihedral_rad) * avg_chord * 0.5)
 
         return vol, surf, top, side, cv
 
