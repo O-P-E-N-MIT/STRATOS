@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import minimize_scalar, fsolve, least_squares
+from scipy.optimize import minimize_scalar, least_squares
 
 # The ISA atmospheric model used here is modelled only for Troposphere and Tropopause which is enough for our case.
 T0 = 288.15             # Ground Temperature
@@ -93,33 +93,76 @@ def get_net_lift (
     # Net static lift
     return Lg - (rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume + total_mass) * ag
 
-def get_gas_mass (
-        P, T,
-        volume,                     # Volume of the envelope.
-        RH,                         # Relative Humidity (0-1).
-        purity,                     # Purity of lifting gas.
-        delta_P,                    # Increment in lifting gas pressure.
-        delta_T,                    # Increment in lifting gas temperature.
-        gas_constant,               # Gas constant for the gas filled in the aerostat.
-        inflation_fraction_factor   # Inflation Fraction factor.
+def solve_envelope_temperature(
+        T_amb, P_amb, D, thermal_element_area,
+        Qd_u, Qd_l, Qsky_u0, Qsky_l0, Qearth_l,
+        mu, k, nu, Pr,
+        R_mix, cp_mix, mu_mix, k_mix,
+        wind_speed, emissivity, h_o_forced, T_guess
 ):
-    rho_lg = purity * (P + delta_P) / (gas_constant * (T + delta_T))
-    rho_ba = P/(287*T)
-    inflation_fraction = inflation_fraction_factor * ((T + delta_T) / (P + delta_P))
+    # Solves the coupled gas/upper-skin/lower-skin steady-state energy balance for a
+    # single altitude. Used both to precompute reference gas temperatures (when
+    # delta_T is None) and inside the get_properties altitude sweep.
+    def residual(T_vars):
+        T_g_var, T_u_var, T_l_var = T_vars
 
-    # Returns the lifting gas mass and the ballonet mass
-    return rho_lg * inflation_fraction * volume + rho_ba * (1 - inflation_fraction) * volume
+        rho_g = P_amb / (R_mix * T_g_var)
+        nu_g = mu_mix / rho_g
+        beta_g = 1.0 / T_g_var
+        Pr_g = (cp_mix * mu_mix) / k_mix
 
+        # In case of natural convection,
+        if wind_speed == 0:
+            Gr_a_u = (ag * (1 / T_amb) * np.abs(T_g_var - T_u_var) * D**3) / (nu**2)
+            Gr_a_l = (ag * (1 / T_amb) * np.abs(T_g_var - T_l_var) * D**3) / (nu**2)
+            h_o_l = (k / D) * (0.6 + 0.387 * ((Gr_a_l * Pr) / (1.0 + (0.559 / Pr)**(9/16))**(16/9))**(1/6))**2
+            h_o_u = (k / D) * (0.6 + 0.387 * ((Gr_a_u * Pr) / (1.0 + (0.559 / Pr)**(9/16))**(16/9))**(1/6))**2
 
-# NOTE: This is the older thermal model used by STRATOS to get envelope temperature.
-def get_thermal_model (T_amb, solar_flux, absorptivity, emissivity, wind_speed):
-    # This formula is only valid for small characteristic lengths.
-    h_conv = 10.45 - wind_speed + 10.0 * np.sqrt(wind_speed)
-    q_solar = solar_flux * absorptivity
-    q_ir = emissivity * 5.67e-8 * (T_amb ** 4)
-    T_env = T_amb + (q_solar - q_ir) / max(h_conv, 1e-3)
+        # In case of forced convection,
+        else:
+            h_o_l = h_o_u = h_o_forced
 
-    return T_env
+        Gr_g_u = (ag * beta_g * np.abs(T_g_var - T_u_var) * D**3) / (nu_g**2 + 1e-12)
+        Gr_g_l = (ag * beta_g * np.abs(T_g_var - T_l_var) * D**3) / (nu_g**2 + 1e-12)
+        h_i_u = 0.13 * (k_mix / D) * np.abs(Gr_g_u * Pr_g)**0.33
+        h_i_l = 0.13 * (k_mix / D) * np.abs(Gr_g_l * Pr_g)**0.33
+
+        # Infrared emissivity
+        IR_l_to_u = emissivity * thermal_element_area * SIGMA * (T_l_var**4 - T_u_var**4)
+        IR_u_to_l = emissivity * thermal_element_area * SIGMA * (T_u_var**4 - T_l_var**4)
+
+        # Black body radiation.
+        Q_sky_u = Qsky_u0 - emissivity * thermal_element_area * SIGMA * T_u_var**4
+        Q_sky_l = Qsky_l0 - emissivity * thermal_element_area * SIGMA * T_l_var**4
+
+        # Natural convection from atmosphere.
+        Q_cv_a_u = h_o_u * thermal_element_area * (T_amb - T_u_var)
+        Q_cv_a_l = h_o_l * thermal_element_area * (T_amb - T_l_var)
+
+        # Internal convection from the lifting gas.
+        Q_cv_g_u = h_i_u * thermal_element_area * (T_g_var - T_u_var)
+        Q_cv_g_l = h_i_l * thermal_element_area * (T_g_var - T_l_var)
+
+        dQ_u = Q_cv_a_u + Q_cv_g_u + Q_sky_u + IR_l_to_u + Qd_u
+        dQ_l = Q_cv_a_l + Q_cv_g_l + Q_sky_l + IR_u_to_l + Qd_l + Qearth_l
+        dQ_g = -Q_cv_g_u - Q_cv_g_l
+
+        return np.array([dQ_g, dQ_u, dQ_l])
+
+    result = least_squares(
+        residual,
+        T_guess,
+        bounds=(100, 500),
+        method='trf',
+        xtol=1e-12,
+        ftol=1e-12,
+        gtol=1e-12,
+        max_nfev=2000,
+    )
+
+    converged = result.success and np.max(np.abs(result.fun)) < 1e-6
+
+    return result.x, converged
 
 # Main class to perform all calculations for the Aerostat.
 class AerostatHull:
@@ -136,7 +179,7 @@ class AerostatHull:
             RH,                             # Relative Humidity (0-1).
             purity,                         # Purity of lifting gas.
             delta_P,                        # Increment in lifting gas pressure.
-            delta_T,                        # Increment in lifting gas temperature.
+            delta_T,                        # Increment in lifting gas temperature. None => derived from thermal model.
             gas_constant,                   # Gas constant for the gas filled in the aerostat.
             gamma=5/3,                      # Adiabatic index of the lifting gas.
             inflation_fraction_oper=0.9,    # Inflation Fraction at operation.
@@ -174,42 +217,26 @@ class AerostatHull:
             absorptivity=0.3,
             wind_speed=5
     ):
-        P_dep, T_dep = get_atmospheric_properties(deployment_height)
-        P_op,  T_op  = get_atmospheric_properties(operational_height)
-
-        # In case if there are no ballonets, the inflation fraction is always 1.
-        if ballonet_number == 0:
-            self.inflation_fraction_oper = 1
-            self.inflation_fraction_deploy = 1
-            self.inflation_fraction_factor = UnitMultiplier()
-            self.has_ballonets = False
-
-        # If there are ballonets, the necessary inflation fraction calculations are to be done.
-        else:
-            self.inflation_fraction_oper = inflation_fraction_oper
-            self.inflation_fraction_deploy = inflation_fraction_oper * ((P_op + delta_P) / (P_dep + delta_P)) * ((T_dep + delta_T) / (T_op + delta_T))
-            self.inflation_fraction_factor = inflation_fraction_oper * (P_op + delta_P) / (T_op + delta_T)
-            self.has_ballonets = True
+        self.envelope = envelope
+        self.lobe_number = lobe_number
+        self.multi_lobe_distances = (e, f, g)
+        self.gamma = gamma
 
         self.delta_P = delta_P
         self.delta_T = delta_T
         self.deployment_altitude = deployment_height
         self.operational_altitude = operational_height
         self.pressure_altitude = margin_height + operational_height
-        self.envelope = envelope
-        self.gas_properties = (RH, purity, delta_P, delta_T, gas_constant, self.inflation_fraction_factor)
-        self.gamma = gamma
-        self.lobe_number = lobe_number
-        self.multi_lobe_distances = (e, f, g)
+
         self.skin_density = skin_density
         self.additional_mass = additional_mass
-        self.has_ballonets = ballonet_number != 0
 
         self.cte = cte
         self.elastic_modulus = elastic_modulus
         self.strength = strength
         self.temp_derating = temp_derating
         self.skin_thickness = skin_thickness
+
         self.solar_flux = solar_flux
         self.earth_temperature = earth_temperature
         self.albedo = albedo
@@ -219,6 +246,39 @@ class AerostatHull:
 
         # Tether weight per unit meter.
         self.tether_density = tether_density * tether_fraction
+
+        # If there are no ballonets, then the inflation fraction factor is always 1.
+        if ballonet_number == 0:
+            self.has_ballonets = False
+            self.inflation_fraction_oper = 1
+            self.inflation_fraction_deploy = 1
+            self.inflation_fraction_factor = UnitMultiplier()
+
+        else:
+            self.has_ballonets = True
+            self.inflation_fraction_oper = inflation_fraction_oper
+
+            P_dep, T_dep = get_atmospheric_properties(deployment_height)
+            P_op,  T_op  = get_atmospheric_properties(operational_height)
+
+            # If the superheat (delta_T) is not provided, it is calculated from the thermal model. 
+            if delta_T is None:
+                _, surface_area, projected_area = self._geometry()
+
+                sol_dep, _ = self._solve_gas_temperature(deployment_height, surface_area, projected_area, RH, purity, delta_P, gas_constant)
+                sol_op, _  = self._solve_gas_temperature(operational_height, surface_area, projected_area, RH, purity, delta_P, gas_constant)
+
+                T_gas_dep = sol_dep[0]
+                T_gas_op = sol_op[0]
+
+            else:
+                T_gas_dep = T_dep + delta_T
+                T_gas_op = T_op + delta_T
+
+            self.inflation_fraction_deploy = inflation_fraction_oper * ((P_op + delta_P) / (P_dep + delta_P)) * (T_gas_dep / T_gas_op)
+            self.inflation_fraction_factor = inflation_fraction_oper * (P_op + delta_P) / T_gas_op
+
+        self.gas_properties = (RH, purity, delta_P, delta_T, gas_constant, self.inflation_fraction_factor)
 
         # Ballonet fabric mass per unit volume of envelope^2/3
         self.ballonet_fabric_mass = BALLONET_SHAPE_FACTOR.get(ballonet_shape, 3) * ballonet_fabric_density * (np.pi * ballonet_number)**(1/3) * (1 - self.inflation_fraction_deploy)**(2/3)
@@ -234,146 +294,119 @@ class AerostatHull:
             wing_vol = total_planform * (avg_chord * (wing_thickness / 100.0))
             self.wing_mass = wing_vol * wing_density
 
-    def get_properties (self, n=None, include_tether=True, safety_factor=4.0):
-        if n is None:
-            n = int((self.pressure_altitude - self.deployment_altitude) / 100)
-
-        D = self.envelope.diameter
+    def _geometry (self):
         e, f, g = self.multi_lobe_distances
-        
-        h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
-        RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
-
-        P, T = get_atmospheric_properties(h)
-        e_vap = get_vapour_pressure(T, RH)
-        rho = P / (R * T)
-        mu = 1.458e-6 * (T**1.5) / (T + 110.4)  
-        k = 0.024 * (T / 293.15)**0.8    
-        nu = mu / rho
-        Pr = (CP * mu) / k    
 
         if self.lobe_number == 1:
-            volume = self.envelope.volume()
-            surface_area = self.envelope.surface_area()
-            projected_area = self.envelope.side_projected_area()
+            return self.envelope.volume(), self.envelope.surface_area(), self.envelope.side_projected_area()
         elif self.lobe_number == 2:
-            volume = self.envelope.volume_bilobe(f)
-            surface_area = self.envelope.surface_area_bilobe(f)
-            projected_area = self.envelope.top_projected_area_bilobe(f)
+            return self.envelope.volume_bilobe(f), self.envelope.surface_area_bilobe(f), self.envelope.top_projected_area_bilobe(f)
         else:
-            volume = self.envelope.volume_trilobe(e, f, g)
-            surface_area = self.envelope.surface_area_trilobe(e, f, g)
-            projected_area = self.envelope.top_projected_area_trilobe(e, f, g)
+            return self.envelope.volume_trilobe(e, f, g), self.envelope.surface_area_trilobe(e, f, g), self.envelope.top_projected_area_trilobe(e, f, g)
 
-        current_tether_mass = (self.tether_density * h) if include_tether else 0
-        ballonet_mass = self.ballonet_fabric_mass * volume**(2/3)
-        total_mass = (self.skin_density * surface_area +
-                      self.additional_mass +
-                      self.fin_mass +
-                      self.wing_mass +
-                      current_tether_mass +                
-                      ballonet_mass) 
+    def _air_and_gas_properties (self, P, T, purity, gas_constant):
+        # Properties of atmospheric air in ballonet.
+        rho = P / (R * T)
+        mu = 1.458e-6 * (T**1.5) / (T + 110.4)
+        k = 0.024 * (T / 293.15)**0.8
+        nu = mu / rho
+        Pr = (CP * mu) / k
 
-        # NOTE: These formulae are only valid for Helium lifting gas.
+        # Properties of pure lifting gas in the envelope.
         cp_lg = (self.gamma / (self.gamma - 1.0)) * gas_constant
-        mu_lg = 1.9e-5 * (T / 293.15)**0.7 
+        mu_lg = 1.9e-5 * (T / 293.15)**0.7
         k_lg = 0.15 * (T / 293.15)**0.7
 
         # Due to presence of ballonet air, the properties of the net mixture is computed by linear blending.
+        R_mix = purity * gas_constant + (1 - purity) * R
         cp_mix = purity * cp_lg + (1 - purity) * CP
         mu_mix = purity * mu_lg + (1 - purity) * mu
         k_mix = purity * k_lg + (1 - purity) * k
-        R_mix = purity * gas_constant + (1 - purity) * R
-        
-        # In case of forced convection,
-        if self.wind_speed > 0:
-            Re = (rho * self.wind_speed) / mu
-            h_o_forced = (k / D) * Re * Pr * (0.2275 / (np.log10(Re)**2.584) - 850.0 / Re) 
 
-        # Black body temperature
-        T_bb = 0.052 * T ** 1.5
+        return mu, k, nu, Pr, R_mix, cp_mix, mu_mix, k_mix
 
-        # Assuming the envelope is symmetric about the yaw plane, the surface area of the upper half and the lower half
-        # of envelope must be 0.
+    def _thermal_inputs (self, T, surface_area, projected_area):
+        # Assuming the envelope is symmetric about the yaw plane, the surface area of the upper half and the lower
+        # half of envelope must be equal.
         #
         # NOTE: This is not true for asymmetric envelopes and asymmetric trilobe configurations.
         thermal_element_area = surface_area / 2
-        
+
+        # Black body temperature of earth estimated from ambient temperature.
+        T_bb = 0.052 * T ** 1.5
+
+        # Constants required for thermal model analysis.
         Qd_u = self.absorptivity * self.solar_flux * projected_area
         Qd_l = self.absorptivity * self.solar_flux * self.albedo * projected_area
         Qsky_u0 = self.emissivity * thermal_element_area * SIGMA * T_bb ** 4
         Qsky_l0 = self.emissivity * thermal_element_area * SIGMA * T_bb ** 4
         Qearth_l = self.emissivity * thermal_element_area * SIGMA * self.earth_temperature ** 4
 
+        return thermal_element_area, Qd_u, Qd_l, Qsky_u0, Qsky_l0, Qearth_l
+
+    def _solve_gas_temperature(self, altitude, surface_area, projected_area, RH, purity, delta_P, gas_constant, T_guess=None):
+        P, T = get_atmospheric_properties(altitude)
+        rho = P / (R * T)
+        D = self.envelope.diameter
+
+        mu, k, nu, Pr, R_mix, cp_mix, mu_mix, k_mix = self._air_and_gas_properties(T, rho, purity, gas_constant)
+        thermal_element_area, Qd_u, Qd_l, Qsky_u0, Qsky_l0, Qearth_l = self._thermal_inputs(T, surface_area, projected_area)
+
+        h_o_forced = None
+        if self.wind_speed > 0:
+            Re = (rho * self.wind_speed) / mu
+            h_o_forced = (k / D) * Re * Pr * (0.2275 / (np.log10(Re)**2.584) - 850.0 / Re)
+
+        if T_guess is None:
+            T_guess = np.array([T, T, T])
+
+        return solve_envelope_temperature(
+            T, P, D, thermal_element_area,
+            Qd_u, Qd_l, Qsky_u0, Qsky_l0, Qearth_l,
+            mu, k, nu, Pr, R_mix, cp_mix, mu_mix, k_mix,
+            self.wind_speed, self.emissivity, h_o_forced, T_guess
+        )
+
+    def get_properties (self, n=None, include_tether=True, safety_factor=4.0):
+        if n is None:
+            n = int((self.pressure_altitude - self.deployment_altitude) / 100)
+
+        D = self.envelope.diameter
+        h = np.linspace(self.deployment_altitude, self.pressure_altitude, n)
+        RH, purity, delta_P, delta_T, gas_constant, _ = self.gas_properties
+
+        P, T = get_atmospheric_properties(h)
+        e_vap = get_vapour_pressure(T, RH)
+        rho = P / (R * T)
+
+        volume, surface_area, projected_area = self._geometry()
+
+        mu, k, nu, Pr, R_mix, cp_mix, mu_mix, k_mix = self._air_and_gas_properties(T, rho, purity, gas_constant)
+        thermal_element_area, Qd_u, Qd_l, Qsky_u0, Qsky_l0, Qearth_l = self._thermal_inputs(T, surface_area, projected_area)
+
+        # In case of forced convection,
+        h_o_forced = None
+        if self.wind_speed > 0:
+            Re = (rho * self.wind_speed) / mu
+            h_o_forced = (k / D) * Re * Pr * (0.2275 / (np.log10(Re)**2.584) - 850.0 / Re)
+
         T_g = np.zeros(n)
         T_u = np.zeros(n)
         T_l = np.zeros(n)
 
         T_guess = np.array([T[0], T[0], T[0]])
+        converged = True
 
         for i in range(n):
-
-            def steady_thermal_single (T_vars):
-                T_g_var, T_u_var, T_l_var = T_vars
-
-                rho_g = P[i] / (R_mix * T_g_var)
-                nu_g = mu_mix[i] / rho_g
-                beta_g = 1.0 / T_g_var
-                Pr_g = (cp_mix * mu_mix[i]) / k_mix[i]
-
-                # In case of natural convection,
-                if self.wind_speed == 0:
-                    Gr_a_u = (ag * (1/T) * np.abs(T_g_var - T_u_var) * D**3) / (nu**2)
-                    Gr_a_l = (ag * (1/T) * np.abs(T_g_var - T_l_var) * D**3) / (nu**2)
-                    h_o_l = (k / D) * (0.6 + 0.387 * ((Gr_a_l * Pr) / (1.0 + (0.559 / Pr)**(9/16))**(16/9))**(1/6))**2 
-                    h_o_u = (k / D) * (0.6 + 0.387 * ((Gr_a_u * Pr) / (1.0 + (0.559 / Pr)**(9/16))**(16/9))**(1/6))**2 
-
-                # In case of forced convection,
-                else:
-                    h_o_l = h_o_u = h_o_forced
-
-                Gr_g_u = (ag * beta_g * np.abs(T_g_var - T_u_var) * D**3) / (nu_g**2 + 1e-12)
-                Gr_g_l = (ag * beta_g * np.abs(T_g_var - T_l_var) * D**3) / (nu_g**2 + 1e-12)
-                h_i_u = 0.13 * (k_mix[i] / D) * np.abs(Gr_g_u * Pr_g)**0.33
-                h_i_l = 0.13 * (k_mix[i] / D) * np.abs(Gr_g_l * Pr_g)**0.33
-
-                # Infrared emissivity
-                IR_l_to_u = self.emissivity * thermal_element_area * SIGMA * (T_l_var**4 - T_u_var**4)
-                IR_u_to_l = self.emissivity * thermal_element_area * SIGMA * (T_u_var**4 - T_l_var**4)
-
-                # Black body radiation.
-                Q_sky_u = Qsky_u0[i] - self.emissivity * thermal_element_area * SIGMA * T_u_var**4
-                Q_sky_l = Qsky_l0[i] - self.emissivity * thermal_element_area * SIGMA * T_l_var**4
-
-                # Natural convection from atmosphere.
-                Q_cv_a_u = h_o_u[i] * thermal_element_area * (T[i] - T_u_var)
-                Q_cv_a_l = h_o_l[i] * thermal_element_area * (T[i] - T_l_var)
-
-                # Internal convection from the lifting gas.
-                Q_cv_g_u = h_i_u * thermal_element_area * (T_g_var - T_u_var)
-                Q_cv_g_l = h_i_l * thermal_element_area * (T_g_var - T_l_var)
-
-                dQ_u = Q_cv_a_u + Q_cv_g_u + Q_sky_u + IR_l_to_u + Qd_u
-                dQ_l = Q_cv_a_l + Q_cv_g_l + Q_sky_l + IR_u_to_l + Qd_l + Qearth_l
-                dQ_g = -Q_cv_g_u - Q_cv_g_l
-
-                # NOTE: A residual scaler has to be added so that in case of smaller airships with smaller areas 
-                # don't end up converging properly. Something like a factor of 1/max(h0 * A, 1).
-                return np.array([dQ_g, dQ_u, dQ_l])
-
-            result = least_squares(
-                steady_thermal_single,
-                T_guess,
-                bounds=(100, 400),
-                method='trf',
-                xtol=1e-12,
-                ftol=1e-12,
-                gtol=1e-12,
-                max_nfev=2000,
+            sol, converged = solve_envelope_temperature(
+                T[i], P[i], D, thermal_element_area,
+                Qd_u, Qd_l, Qsky_u0[i], Qsky_l0[i], Qearth_l,
+                mu[i], k[i], nu[i], Pr[i],
+                R_mix, cp_mix, mu_mix[i], k_mix[i],
+                self.wind_speed, self.emissivity,
+                h_o_forced[i] if h_o_forced is not None else None,
+                T_guess
             )
-
-            sol = result.x
-            converged = result.success and np.max(np.abs(result.fun)) < 1e-6
 
             T_g[i], T_u[i], T_l[i] = sol
             T_guess = sol
@@ -381,36 +414,38 @@ class AerostatHull:
             if not converged:
                 break
 
-        T_star = T_g if delta_T == None else (T + delta_T)
+        T_star = T_g if delta_T is None else (T + delta_T)
 
         if self.has_ballonets:
             I = self.inflation_fraction_factor * (T_star / (P + delta_P))
             I = np.clip(I, 0, 1)
         else:
             I = np.full_like(P, 1)
-        
+
         BV = (1 - I) * volume
 
         rho_lg = purity * (P + delta_P) / (gas_constant * T_star)
         rho_ba = rho
-        
+
+        current_tether_mass = (self.tether_density * h) if include_tether else 0
+        ballonet_mass = self.ballonet_fabric_mass * volume**(2/3)
+        total_mass = (self.skin_density * surface_area +
+                      self.additional_mass +
+                      self.fin_mass +
+                      self.wing_mass +
+                      current_tether_mass +
+                      ballonet_mass)
+
         Lg = K * volume * (P - (1-RDWV)*e_vap) / T
         Ln = Lg - (rho_lg * I * volume + rho_ba * (1 - I) * volume + total_mass) * ag
 
-        # T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
-        
-        # sigma = (
-        #     self.cte * (T_env - T) * self.elastic_modulus                                 
-        #     + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   
-        # )
-
         sigma = (
-            self.cte * np.abs(T_u - T_l) * self.elastic_modulus / 2                                
-            + delta_P * self.envelope.diameter / (4 * self.skin_thickness) * 1e-6   
+            self.cte * np.abs(T_u - T_l) * self.elastic_modulus / 2
+            + delta_P * D / (4 * self.skin_thickness) * 1e-6
         )
 
         T_env = (T_u + T_l) / 2
-        
+
         derating = np.full_like(T_env, 1)
         derating_mask = T_env > 293.15
         derating[derating_mask] = np.maximum(0, 1 - (T_env[derating_mask] - 293.15) * self.temp_derating / 100)
@@ -434,24 +469,34 @@ class AerostatHull:
         e_vap = get_vapour_pressure(T_op, RH)
 
         I_op = self.inflation_fraction_oper
-        rho_lg = purity * (P_op + delta_P) / (gas_constant * (T_op + delta_T))
         rho_ba = P_op / (287 * T_op)
 
         tether_mass_op = self.tether_density * self.operational_altitude
 
-        def objective(L):
-            self.envelope.set_length(L)
+        # When delta_T is fixed, the gas temperature (and hence rho_lg) is independent
+        # of envelope length, so it's computed once here. When delta_T is None, the gas
+        # temperature depends on surface_area/projected_area, which change with L, so
+        # it has to be re-solved inside the objective for every trial length.
+        rho_lg_fixed = None
+        if delta_T is not None:
+            rho_lg_fixed = purity * (P_op + delta_P) / (gas_constant * (T_op + delta_T))
 
-            # Calculate volume and surface area dynamically as length changes
-            if self.lobe_number == 1:
-                vol = self.envelope.volume()
-                surf = self.envelope.surface_area()
-            elif self.lobe_number == 2:
-                vol = self.envelope.volume_bilobe(self.multi_lobe_distances[1])
-                surf = self.envelope.surface_area_bilobe(self.multi_lobe_distances[1])
+        T_guess = np.array([T_op, T_op, T_op])
+
+        def objective(L):
+            nonlocal T_guess
+
+            self.envelope.set_length(L)
+            vol, surf, proj = self._geometry()
+
+            if rho_lg_fixed is not None:
+                rho_lg = rho_lg_fixed
             else:
-                vol = self.envelope.volume_trilobe(*self.multi_lobe_distances)
-                surf = self.envelope.surface_area_trilobe(*self.multi_lobe_distances)
+                sol, _ = self._solve_gas_temperature(
+                    self.operational_altitude, surf, proj, RH, purity, delta_P, gas_constant, T_guess=T_guess
+                )
+                T_guess = sol
+                rho_lg = purity * (P_op + delta_P) / (gas_constant * sol[0])
 
             ballonet_mass = self.ballonet_fabric_mass * vol**(2/3)
 
@@ -480,41 +525,6 @@ class AerostatHull:
         # Set the envelope to the newly optimized length and return
         self.envelope.set_length(res.x)
         return self.envelope, res.fun
-
-    # This function calculates the burst altitude beyond the maximum operational altitude to find the factor of safety.
-    # NOTE: Given the atmosphere is limited upto 20km, the burst altitude cannot be calculate beyond that.
-    def get_burst_altitude (self, safety_factor=2):
-        # To fix this.
-        allowable_stress = self.strength / safety_factor
-        hoop_stress_factor = self.envelope.diameter / (4 * self.skin_thickness)
-
-        def func (h):
-            _, T = get_atmospheric_properties(h)
-            T_env = get_thermal_model(T, self.solar_flux, self.absorptivity, self.emissivity, self.wind_speed)
-
-            # Thermal stress
-            thermal_strain = self.cte * (T_env - T)
-            thermal_stress = thermal_strain * self.elastic_modulus
-
-            # Hoop stress from pressure difference (thin shell, approximate spherical/prolate).
-            sigma_pa = self.delta_P * hoop_stress_factor
-            pressure_stress = sigma_pa * 1e-6
-
-            # Total stress acting on the envelope skin due to both thermal and pressure effects.
-            total_stress = thermal_stress + pressure_stress
-
-            # Temperature derating on material strength.
-            if T_env > 293.15:
-                total_stress *= max(0, 1 - (T_env - 293.15) * self.temp_derating / 100)
-
-            return allowable_stress - total_stress
-
-        try:
-            h_burst = minimize_scalar(func, bounds=[0, 20000], method='bounded', options={'xatol': 1e-8})
-            return h_burst.x
-        # If the burst altitude is beyond 20km, it returns 20km as the burst altitude.
-        except ValueError:
-            return 20000
 
 # A unique number which when multiplied by anything will end up giving 1.
 class UnitMultiplier:

@@ -1317,7 +1317,7 @@ class AirshipGUI(QMainWindow):
             target_dir = self.current_session_folder
             p = self.get_parameters(target_dir)
 
-            from aerostat import AerostatHull, get_atmospheric_properties, get_thermal_model, get_gas_mass
+            from aerostat import AerostatHull, get_atmospheric_properties
             from geometry_handler import GertlerEnvelope, NACAEnvelope
 
             series = p.get("ENVELOPE_SERIES", "GERTLER")
@@ -1388,13 +1388,12 @@ class AirshipGUI(QMainWindow):
             operational_index = np.searchsorted(h, ahull.operational_altitude)
 
             P_op, T_op = get_atmospheric_properties(ahull.operational_altitude)
-            T_env = get_thermal_model(T_op, p["SOLAR_FLUX"], p["ABSORPTIVITY"], p["EMISSIVITY"], p["WIND_SPEED"])
+            # T_env = get_thermal_model(T_op, p["SOLAR_FLUX"], p["ABSORPTIVITY"], p["EMISSIVITY"], p["WIND_SPEED"])
 
             max_rad = ahull.envelope.diameter / 2
             env_mass = surf_area * ahull.skin_density
             ballonet_fabric_mass = ahull.ballonet_fabric_mass * (vol ** (2/3))
             tether_mass_op = (ahull.tether_density * p["OPERATIONAL_HEIGHT"]) if p["INCLUDE_TETHER"] else 0
-            gas_mass_op = get_gas_mass(P_op, T_op, vol, *ahull.gas_properties)
 
             if p.get("INCLUDE_WINGS", False) and p.get("WING_STATIONS"):
                 stations = p["WING_STATIONS"]
@@ -1414,8 +1413,6 @@ class AirshipGUI(QMainWindow):
 
                 ahull.wing_mass = 2 * single_wing_vol * density
 
-            total_mass_op = env_mass + ballonet_fabric_mass + tether_mass_op + ahull.fin_mass + ahull.wing_mass + ahull.additional_mass + gas_mass_op
-
             v_ballonet_total = BV[operational_index]
             v_per_ballonet = v_ballonet_total / max(p["BALLONET_NUMBER"], 1)
             ballonet_radius = (3 * v_per_ballonet / (4 * np.pi)) ** (1/3)
@@ -1433,27 +1430,27 @@ class AirshipGUI(QMainWindow):
             print(f"Envelope Surface Area:              {surf_area:.4f} m²\n")
             print("-" * 50)
 
-            print(f"Ballonet Volume @ Op. Alt.:         {v_ballonet_total:.4f} m³")
-            print(f"Ballonet Fabric Mass:               {ballonet_fabric_mass:.4f} kg\n")
-            print(f"Effective Ballonet Radius:          {ballonet_radius:.4f} m")
-            print("-" * 50)
+            # print(f"Ballonet Volume @ Op. Alt.:         {v_ballonet_total:.4f} m³")
+            # print(f"Ballonet Fabric Mass:               {ballonet_fabric_mass:.4f} kg\n")
+            # print(f"Effective Ballonet Radius:          {ballonet_radius:.4f} m")
+            # print("-" * 50)
 
-            print(f"Envelope Fabric Mass:               {env_mass:.4f} kg")
-            print(f"Fin mass:                           {ahull.fin_mass:.4f} kg")
+            # print(f"Envelope Fabric Mass:               {env_mass:.4f} kg")
+            # print(f"Fin mass:                           {ahull.fin_mass:.4f} kg")
 
-            if p.get("INCLUDE_WINGS", False):
-                print(f"Wing mass:                          {ahull.wing_mass:.4f} kg")
+            # if p.get("INCLUDE_WINGS", False):
+            #     print(f"Wing mass:                          {ahull.wing_mass:.4f} kg")
 
-            print(f"Gas mass @ Op. Alt.:                {gas_mass_op:.4f} kg")
-            print(f"Tether mass @ Op. Alt.:             {tether_mass_op:.4f} kg")
-            print(f"Total mass @ Op. Alt.:              {total_mass_op:.4f} kg\n")
-            print("-" * 50)
+            # print(f"Gas mass @ Op. Alt.:                {gas_mass_op:.4f} kg")
+            # print(f"Tether mass @ Op. Alt.:             {tether_mass_op:.4f} kg")
+            # print(f"Total mass @ Op. Alt.:              {total_mass_op:.4f} kg\n")
+            # print("-" * 50)
 
             print(f"Inflation Fraction @ Op. Alt.:      {I[operational_index]*100:.2f} %")
             print(f"Inflation Fraction @ Dep. Alt.:     {ahull.inflation_fraction_deploy*100:.2f} %\n")
 
             print("------------ STRESS & THERMAL ANALYSIS -----------")
-            print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
+            # print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
             print(f"Estimated Burst Altitude:           {">" if burst_alt == p["OPERATIONAL_HEIGHT"] + p["MARGIN_HEIGHT"] else ""}{burst_alt:.2f} m")
             print(f"Total Combined Stress:              {op_stress:.2f} MPa")
             print(f"Allowable Stress:                   {allowable_stress:.2f} MPa")

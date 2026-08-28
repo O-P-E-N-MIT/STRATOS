@@ -161,7 +161,7 @@ class Envelope:
     
     # Returns the surface area of the envelope (mono lobe).
     def surface_area (self):
-        X, R = self.points(tuples=False) 
+        X, R = self.points(tuples=False)
         return np.trapezoid(2 * np.pi * R, X)
     
     # Returns the side projected area of the envelope (mono lobe and bi lobe).

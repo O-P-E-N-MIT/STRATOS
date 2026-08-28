@@ -17,6 +17,7 @@ test.py
 check.py
 new.py
 aerostat_test.py
+aerostat_tt.py
 
 settings.json
 *.code-workspace
