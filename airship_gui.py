@@ -163,7 +163,7 @@ class LabeledSlider(QGroupBox):
 class AirshipGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("STRATOS: Software-based Tool for Rapid Airship Translation & Optimized Shaping")
+        self.setWindowTitle("STRATOS: Software-based Tool for Rapid Airship Transformation & Optimized Shaping")
 
         # --- NEW: AUTO-SET ASPECT RATIO & FULLSCREEN ---
         # 1. Get the primary screen information
