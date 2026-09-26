@@ -1451,7 +1451,7 @@ class AirshipGUI(QMainWindow):
 
             print("------------ STRESS & THERMAL ANALYSIS -----------")
             # print(f"Envelope Temp. @ Op. Alt.:          {T_env-273.15:.2f} °C")
-            print(f"Estimated Burst Altitude:           {">" if burst_alt == p["OPERATIONAL_HEIGHT"] + p["MARGIN_HEIGHT"] else ""}{burst_alt:.2f} m")
+            print(f"Estimated Burst Altitude:           {'>' if burst_alt == p['OPERATIONAL_HEIGHT'] + p['MARGIN_HEIGHT'] else ''}{burst_alt:.2f} m")
             print(f"Total Combined Stress:              {op_stress:.2f} MPa")
             print(f"Allowable Stress:                   {allowable_stress:.2f} MPa")
             print(f"Safety Factor:                      {actual_safety_factor:.2f}")
