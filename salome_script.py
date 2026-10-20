@@ -74,15 +74,18 @@ try:
     salome.salome_init()
     geompy = geomBuilder.New()
 
+    if not os.path.isdir(OUTPUT_DIRECTORY):
+        os.makedirs(OUTPUT_DIRECTORY)
+
     O = geompy.MakeVertex(0, 0, 0)
     OX = geompy.MakeVectorDXDYDZ(1, 0, 0)
     OY = geompy.MakeVectorDXDYDZ(0, 1, 0)
     OZ = geompy.MakeVectorDXDYDZ(0, 0, 1)
 
-    # --- TOPOLOGY SAFEGUARD ---
     def safe_polyline(pts, is_closed=True):
-        # We MUST NOT delete internal points, or tapered lofting will crash due to vertex mismatch.
-        # We only delete the very last point if it is an exact duplicate of the first point (Trailing Edge).
+        if len(pts) < 3:
+            raise ValueError("A closed profile needs at least three vertices.")
+
         if is_closed and len(pts) > 2:
             c1 = geompy.PointCoordinates(pts[0])
             c2 = geompy.PointCoordinates(pts[-1])
@@ -90,6 +93,31 @@ try:
                 pts = pts[:-1]
 
         return geompy.MakePolyline(pts, is_closed)
+
+    def require_valid_shape(shape, name):
+        if not geompy.CheckShape(shape, True, -1):
+            raise RuntimeError(f"{name} is invalid; refusing the next OpenCascade operation.")
+        return shape
+
+    def make_solid_loft(wires, ruled, name):
+        if len(wires) < 2:
+            raise ValueError(f"{name} needs at least two section wires.")
+        loft = geompy.MakeThruSections(wires, True, 1e-5, ruled)
+        return require_valid_shape(loft, name)
+
+    def fuse_shapes(shapes, name):
+        if not shapes:
+            raise ValueError(f"Cannot fuse an empty {name} list.")
+        if len(shapes) == 1:
+            return shapes[0]
+        for shape in shapes:
+            if not geompy.CheckBOPArguments(shape):
+                raise RuntimeError(f"Invalid boolean input in {name}.")
+        try:
+            fused = geompy.MakeFuseList(shapes, False, False, None, 1e-5)
+        except TypeError:
+            fused = geompy.MakeFuseList(shapes)
+        return require_valid_shape(fused, name)
 
     def translate_object(object, x_offset, y_offset, z_offset):
         return geompy.MakeTranslationTwoPoints(object, O, geompy.MakeVertex(x_offset * LOBE_OFFSET_X, y_offset * LOBE_OFFSET_Y, z_offset * LOBE_OFFSET_Z))
@@ -195,12 +223,11 @@ try:
             FIN_PENETRATION_MARGIN = (FIN_THICKNESS / 100.0) * FIN_RC_LENGTH * 0.75
             fin = geompy.MakeTranslationVectorDistance(fin, OZ, -INTERCEPT_OFFSET - FIN_PENETRATION_MARGIN)
 
+            fin_angles = FIN_THETA_POS or [i * (360.0 / FIN_NUMBER) for i in range(int(FIN_NUMBER))]
             if LOBE_NUMBER == 1:
-                if not FIN_THETA_POS:
-                    FIN_THETA_POS = [i * (360 / FIN_NUMBER) for i in range(0, int(FIN_NUMBER))]
-                fins = [geompy.MakeRotation(fin, OX, -np.pi/2 + np.radians(theta)) for theta in FIN_THETA_POS]
+                fins = [geompy.MakeRotation(fin, OX, -np.pi/2 + np.radians(theta)) for theta in fin_angles]
             else:
-                for theta in FIN_THETA_POS:
+                for theta in fin_angles:
                     fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(theta)), 0, -1, 0))
                     fins.append(translate_object(geompy.MakeRotation(fin, OX, np.radians(-theta)), 0, 1, 0))
         except Exception as e:
@@ -302,10 +329,8 @@ try:
                 wires_right.append(safe_polyline(pts_r, True))
                 wires_left.append(safe_polyline(pts_l, True))
 
-            # --- RULED LOFTING ---
-            # Using 'False' ensures straight structural lofts between identical topological wire grids
-            wing_right = geompy.MakeThruSections(wires_right, True, 0.0001, False)
-            wing_left = geompy.MakeThruSections(wires_left, True, 0.0001, False)
+            wing_right = make_solid_loft(wires_right, True, "right wing loft")
+            wing_left = make_solid_loft(wires_left, True, "left wing loft")
 
             wings = [wing_right, wing_left]
             print(f"[SUCCESS] Wings lofted successfully.")
@@ -341,9 +366,9 @@ try:
     Final_Lobes_Solid = lobes[0]
     if len(lobes) > 1:
         try:
-            Final_Lobes_Solid = geompy.MakeFuseList(lobes)
+            Final_Lobes_Solid = fuse_shapes(lobes, "lobe fuse")
         except Exception as e:
-            print(f"[WARNING] Lobe Fusion failed: {e}")
+            print(f"[WARNING] Lobe fusion failed: {e}")
 
     Final_Airship_Solid = Final_Lobes_Solid
 
@@ -363,7 +388,7 @@ try:
 
     Final_Airship_Solid_ID = geompy.addToStudy(Final_Airship_Solid, FINAL_OBJECT_NAME)
 
-    if salome.sg.hasDesktop():
+    if getattr(salome, "sg", None) and salome.sg.hasDesktop():
         gg = salome.ImportComponentGUI("GEOM")
         gg.createAndDisplayGO(Final_Airship_Solid_ID)
         gg.setDisplayMode(Final_Airship_Solid_ID, 1)

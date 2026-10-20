@@ -2,42 +2,30 @@ import os
 import re
 import sys
 
-# --- 3D VISUALIZATION IMPORTS ---
 import pyvista as pv
-from PySide6.QtCore import Qt, Signal, QThread, QObject
-from PySide6.QtGui import QFont, QDoubleValidator
+from PySide6.QtCore import QPointF, Qt, Signal, QThread, QObject
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QComboBox, QSlider, QGroupBox, QFileDialog, QTextEdit,
     QButtonGroup, QCheckBox, QMessageBox, QSplitter, QTableWidget,
-    QTableWidgetItem, QHeaderView, QScrollArea, QSizePolicy, QListWidget, QInputDialog,QStackedWidget
+    QTableWidgetItem, QHeaderView, QScrollArea, QSizePolicy, QListWidget, QInputDialog, QStackedWidget,
+    QStyle, QStyleOptionButton
 )
 from pyvistaqt import BackgroundPlotter
-from airfoil import get_airfoil_points, scan_airfoil_directory
+from airfoil import get_airfoil_points
 
-# Integration of balloon.py
 from balloon import create_balloon_geometry
 from geometry import AirshipGeometry, plot_and_save_profile
 from geometry_handler import STANDARD_ENVELOPES
 
-# --- NEW AIRFOIL IMPORT ---
-from airfoil import get_airfoil_points
-
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
-import matplotlib.pyplot as plt
-
-
-# --- THREAD-SAFE LOGGING SYSTEM ---
 
 class StatusLogger(QObject):
-    """
-    Redirects python 'print' statements to a Signal.
-    Allows print() calls from external files to show up in the
-    GUI QTextEdit without causing cross-thread memory corruption.
-    """
+    """Redirects printed output to the GUI log safely across threads."""
     message_logged = Signal(str)
 
     def write(self, s):
@@ -46,8 +34,6 @@ class StatusLogger(QObject):
 
     def flush(self):
         pass
-
-# --- WORKER OBJECT FOR CALCULATIONS ---
 
 class GenerationWorker(QObject):
     """Handles the heavy generation logic in a background thread."""
@@ -64,12 +50,10 @@ class GenerationWorker(QObject):
 
     def run(self):
         try:
-            # Determine the file path for the primary STL output
             output_path = os.path.join(self.params['OUTPUT_DIRECTORY'], f"{self.params['FINAL_OBJECT_NAME']}.stl")
 
-            if self.mode_id == 3: # BALLOON MODE
+            if self.mode_id == 3:
                 print(f"[PROCESS] Starting Superpressure Balloon generation...")
-                # Balloon generation logic remains independent of Salome
                 create_balloon_geometry(
                     gore_model=self.gore_model,
                     target_volume=self.volume_val,
@@ -83,13 +67,10 @@ class GenerationWorker(QObject):
                 print(f"[SUCCESS] Balloon STL generated at: {output_path}")
                 self.finished.emit((None, output_path))
 
-            else: # AIRSHIP MODES
+            else:
                 print(f"[PROCESS] Initializing Airship Geometry Engine...")
                 g = AirshipGeometry(self.params, self.params['SALOME_PATH'], self.params['ENVELOPE_SERIES'])
 
-                # LOGIC BYPASS:
-                # If compute_added_mass is False, we pass the format (e.g., "STL") to skip BEM
-                # If True, we pass "FULL" to trigger compute_added_mass in geometry.py
                 if not self.compute_added_mass:
                     fmt = self.params.get('EXPORT_FORMAT', 'STL')
                     process, matrix = g.run_salome(fmt)
@@ -104,8 +85,6 @@ class GenerationWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
-# --- UI COMPONENTS ---
-
 class LabeledSlider(QGroupBox):
     value_changed_by_user = Signal(float)
 
@@ -116,7 +95,6 @@ class LabeledSlider(QGroupBox):
         self._max_slider_val = int((max_val - min_val) / step)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        # Disable scroll behavior by ignoring wheel events
         self.slider.wheelEvent = lambda event: event.ignore()
 
         self.slider.setMinimum(0)
@@ -160,29 +138,45 @@ class LabeledSlider(QGroupBox):
         self.slider.setValue(slider_pos)
         self.value_editor.setText(f"{val:.{self.decimals}f}")
 
+
+class ThemedCheckBox(QCheckBox):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.isChecked():
+            return
+
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        indicator = self.style().subElementRect(QStyle.SE_CheckBoxIndicator, option, self)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#FFFFFF"), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(
+            QPointF(indicator.left() + indicator.width() * 0.24, indicator.top() + indicator.height() * 0.55),
+            QPointF(indicator.left() + indicator.width() * 0.44, indicator.top() + indicator.height() * 0.74),
+        )
+        painter.drawLine(
+            QPointF(indicator.left() + indicator.width() * 0.44, indicator.top() + indicator.height() * 0.74),
+            QPointF(indicator.left() + indicator.width() * 0.78, indicator.top() + indicator.height() * 0.29),
+        )
+        painter.end()
+
 class AirshipGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("STRATOS: Software-based Tool for Rapid Airship Transformation & Optimized Shaping")
 
-        # --- NEW: AUTO-SET ASPECT RATIO & FULLSCREEN ---
-        # 1. Get the primary screen information
         screen = QApplication.primaryScreen().geometry()
         screen_width = screen.width()
         screen_height = screen.height()
 
-        # 2. Set a fallback size (90% of screen) if user restores from maximized
         width = int(screen_width * 0.9)
         height = int(screen_height * 0.9)
         self.resize(width, height)
 
-        # 3. Default to Maximized (Taskbar visible)
-        # This replaces the fixed setGeometry(100, 100, 1400, 950)
         self.showMaximized()
-        # QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-        # QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
-        # --- EXISTING INITIALIZATION ---
         self.salome_path = r"C:\SALOME-9.15.0\run_SALOME.bat"
         self.base_output_directory = os.path.join(os.path.expanduser("~"), "Documents", "Airship_Outputs")
         if not os.path.exists(self.base_output_directory):
@@ -199,14 +193,13 @@ class AirshipGUI(QMainWindow):
         self._init_persistent_controls()
 
         self.tab_widget = QTabWidget()
-        # Add stretch to make the tab widget take up all available vertical space
         self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.primary_input_tab = QWidget()
         self.fairings_tab = QWidget()
         self.fin_tab = QWidget()
         self.wing_tab = QWidget()
-        self.airfoil_tab = QWidget() # --- NEW AIRFOIL TAB INSTANCE ---
+        self.airfoil_tab = QWidget()
         self.output_tab = QWidget()
 
         self.setup_primary_tab_layout()
@@ -214,12 +207,11 @@ class AirshipGUI(QMainWindow):
         self.setup_fairings_tab()
         self.setup_fin_tab()
         self.setup_wing_tab()
-        self.setup_airfoil_tab()     # --- INITIALIZE AIRFOIL TAB ---
+        self.setup_airfoil_tab()
         self.setup_output_tab()
 
         self.main_layout.addWidget(self.tab_widget)
 
-        # Navigation buttons (Next/Prev/Exit/Reset)
         self.main_layout.addWidget(self.setup_navigation_buttons())
 
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -227,7 +219,6 @@ class AirshipGUI(QMainWindow):
         self.refresh_tabs()
         self.load_defaults()
 
-        # START LOG REDIRECTION
         self.status_logger = StatusLogger()
         self.status_logger.message_logged.connect(self._append_to_log)
         sys.stdout = self.status_logger
@@ -253,28 +244,39 @@ class AirshipGUI(QMainWindow):
     def _append_to_log(self, text):
         self.log.append(text)
 
-    def _init_persistent_controls(self):
-        self.mode_button_group = QButtonGroup(self)
-        self.mode_btns = []
-        for i, name in enumerate(["STANDARD MODE", "VOLUMETRIC MODE", "SUPER PRESSURE BALLOON", "AEROSTAT"], 1):
-            btn = QPushButton(name)
-            btn.setCheckable(True)
-            btn.setMinimumHeight(40)
-            btn.setFont(QFont("Arial", 10, QFont.Bold))
-            self.mode_button_group.addButton(btn, i)
-            self.mode_btns.append(btn)
-        self.mode_btns[0].setChecked(True)
+    def _create_checkbox(self, label, checked=False, bold=False):
+        checkbox = ThemedCheckBox(label)
+        checkbox.setObjectName("ThemedCheckBox")
+        checkbox.setChecked(checked)
+        if bold:
+            checkbox.setFont(QFont("Arial", 10, QFont.Bold))
+        return checkbox
 
-        self.lobe_button_group = QButtonGroup(self)
-        self.lobe_btns = []
-        for i, name in enumerate(["MONOLOBE", "BILOBE", "TRILOBE"], 1):
-            btn = QPushButton(name)
-            btn.setCheckable(True)
-            btn.setMinimumHeight(40)
-            btn.setFont(QFont("Arial", 10, QFont.Bold))
-            self.lobe_button_group.addButton(btn, i)
-            self.lobe_btns.append(btn)
-        self.lobe_btns[0].setChecked(True)
+    def _create_toggle_button_group(self, labels):
+        button_group = QButtonGroup(self)
+        buttons = []
+        for index, label in enumerate(labels, 1):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setMinimumHeight(40)
+            button.setFont(QFont("Arial", 10, QFont.Bold))
+            button_group.addButton(button, index)
+            buttons.append(button)
+        buttons[0].setChecked(True)
+        return button_group, buttons
+
+    @staticmethod
+    def _add_widgets(layout, widgets):
+        for widget in widgets:
+            layout.addWidget(widget)
+
+    def _init_persistent_controls(self):
+        self.mode_button_group, self.mode_btns = self._create_toggle_button_group(
+            ["STANDARD MODE", "VOLUMETRIC MODE", "SUPER PRESSURE BALLOON", "AEROSTAT"]
+        )
+        self.lobe_button_group, self.lobe_btns = self._create_toggle_button_group(
+            ["MONOLOBE", "BILOBE", "TRILOBE"]
+        )
 
         for btn in self.mode_btns: btn.clicked.connect(self.refresh_tabs)
         for btn in self.lobe_btns: btn.clicked.connect(self.refresh_tabs)
@@ -285,11 +287,11 @@ class AirshipGUI(QMainWindow):
 
         m_grp = QGroupBox("Dimensioning Mode")
         m_lay = QHBoxLayout(m_grp)
-        for btn in self.mode_btns: m_lay.addWidget(btn)
+        self._add_widgets(m_lay, self.mode_btns)
 
         self.hull_config_group = QGroupBox("Hull Configuration")
         l_lay = QHBoxLayout(self.hull_config_group)
-        for btn in self.lobe_btns: l_lay.addWidget(btn)
+        self._add_widgets(l_lay, self.lobe_btns)
 
         h_layout.addWidget(m_grp)
         h_layout.addWidget(self.hull_config_group)
@@ -312,17 +314,27 @@ class AirshipGUI(QMainWindow):
             QPushButton:disabled { background-color: #2a2a2a; color: #555555; border: 1px solid #2a2a2a; }
             QPushButton:checked { background-color: #00BFFF; color: #1e1e1e; font-weight: bold; }
             
-            QCheckBox#FinToggle { 
-                color: #FFFFFF; 
-                font-size: 12pt; 
-                font-weight: bold; 
-                padding: 10px; 
-                background-color: #2D2D2D; 
-                border: 2px solid #00BFFF; 
-                border-radius: 5px;
+            QCheckBox#ThemedCheckBox {
+                color: #D4D4D4;
+                padding: 7px 9px;
+                spacing: 8px;
+                border: 1px solid #3c3c3c;
+                border-radius: 4px;
+                background-color: #2D2D2D;
             }
-            QCheckBox#FinToggle::indicator { width: 25px; height: 25px; }
-            QCheckBox#FinToggle:hover { background-color: #3D3D3D; }
+            QCheckBox#ThemedCheckBox:hover { border-color: #00BFFF; background-color: #353535; }
+            QCheckBox#ThemedCheckBox:disabled { color: #666666; background-color: #252526; }
+            QCheckBox#ThemedCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #00BFFF;
+                border-radius: 3px;
+                background-color: #1e1e1e;
+            }
+            QCheckBox#ThemedCheckBox::indicator:hover { background-color: #263a43; }
+            QCheckBox#ThemedCheckBox::indicator:checked {
+                background-color: #00BFFF;
+            }
 
             QScrollBar:vertical {
                 border: none;
@@ -380,21 +392,18 @@ class AirshipGUI(QMainWindow):
         self.hull_shape_box = QGroupBox("Hull Envelope Shape")
         cl = QGridLayout(self.hull_shape_box)
 
-        # FIX: Force equal column width so hiding widgets doesn't resize columns
         cl.setColumnStretch(0, 1)
         cl.setColumnStretch(1, 1)
 
-        # --- NEW: Envelope Series Selector ---
         self.inputs["ENVELOPE_SERIES"] = QComboBox()
         self.inputs["ENVELOPE_SERIES"].setObjectName("LargeDropdown")
         self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA", "DRAGON_DREAM"])
-        self.inputs["ENVELOPE_SERIES"].setMinimumHeight(45) # Maintained large height
+        self.inputs["ENVELOPE_SERIES"].setMinimumHeight(45)
         self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._update_series_visibility)
 
         cl.addWidget(QLabel("Profile Series:"), 0, 0)
-        cl.addWidget(self.inputs["ENVELOPE_SERIES"], 0, 1, 1, 2) # Maintained 2-column span
+        cl.addWidget(self.inputs["ENVELOPE_SERIES"], 0, 1, 1, 2)
 
-        # --- Existing Presets ---
         self.preset_combo = QComboBox()
         self.preset_combo.setObjectName("LargeDropdown")
         self.preset_combo.setMinimumHeight(45)
@@ -405,7 +414,6 @@ class AirshipGUI(QMainWindow):
         cl.addWidget(self.preset_label, 1, 0)
         cl.addWidget(self.preset_combo, 1, 1, 1, 2)
 
-        # --- Parameters ---
         self.inputs["l2d"] = LabeledSlider("Length/Diameter Ratio (L/D)", 1, 8, 3.266, 0.0001, 4)
         self.inputs["m1"] = LabeledSlider("Max. Thickness Position (m1)", 0.3, 0.6, 0.419, 0.0001, 4)
         self.inputs["r0"] = LabeledSlider("Nose Radius (r0)", 0.01, 1, 0.337, 0.0001, 4)
@@ -416,21 +424,16 @@ class AirshipGUI(QMainWindow):
         self.inputs["HULL_HEIGHT"] = LabeledSlider("Max Height (H)", 5.0, 100.0, 14.0, 0.1, 2)
         self.inputs["BOTTOM_FLATNESS"] = LabeledSlider("Bottom Flatness %", 0.0, 100.0, 25.0, 1.0, 0)
 
-        # Add them to the layout (cl)
         cl.addWidget(self.inputs["HULL_WIDTH"], 5, 0)
         cl.addWidget(self.inputs["HULL_HEIGHT"], 5, 1)
         cl.addWidget(self.inputs["BOTTOM_FLATNESS"], 6, 0)
 
-        # REORDERED WIDGETS
-        # Row 2: L/D and m1
         cl.addWidget(self.inputs["l2d"], 2, 0)
         cl.addWidget(self.inputs["m1"], 2, 1)
 
-        # Row 3: Resolution (Below L/D) and r0
         cl.addWidget(self.inputs["ENVELOPE_RESOLUTION"], 3, 0)
         cl.addWidget(self.inputs["r0"], 3, 1)
 
-        # Row 4: r1 and cp
         cl.addWidget(self.inputs["r1"], 4, 0)
         cl.addWidget(self.inputs["cp"], 4, 1)
 
@@ -473,16 +476,11 @@ class AirshipGUI(QMainWindow):
         vl.addWidget(self.inputs["VOLUME"])
         layout.addWidget(self.volume_box)
 
-        # --- NEW: Appendages Box for Wing Toggle ---
         self.appendages_box = QGroupBox("Hull Appendages")
         al = QVBoxLayout(self.appendages_box)
 
-        self.inputs["INCLUDE_WINGS"] = QCheckBox("GENERATE WING WITH HULL")
-        self.inputs["INCLUDE_WINGS"].setChecked(False) # Default to False so the tab is hidden initially
-        self.inputs["INCLUDE_WINGS"].setFont(QFont("Arial", 10, QFont.Bold))
-        self.inputs["INCLUDE_WINGS"].setStyleSheet("color: #00BFFF;")
+        self.inputs["INCLUDE_WINGS"] = self._create_checkbox("GENERATE WING WITH HULL", bold=True)
 
-        # Connect to refresh_tabs to dynamically add/remove the wing tab
         self.inputs["INCLUDE_WINGS"].toggled.connect(self.refresh_tabs)
         self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
 
@@ -505,11 +503,10 @@ class AirshipGUI(QMainWindow):
         w_layout.addWidget(self.inputs["WING_THICKNESS"], 0, 1)
         main_layout.addWidget(wing_dim_group)
 
-        # Dynamic Stations Table
         station_group = QGroupBox("Wing Stations (Root to Tip)")
         s_layout = QVBoxLayout(station_group)
 
-        self.wing_table = QTableWidget(0, 6) # Reverted back to 6 columns
+        self.wing_table = QTableWidget(0, 6)
         self.wing_table.setHorizontalHeaderLabels(["Y (Span)", "Chord", "Twist (°)", "Sweep Offset (X)", "Dihedral Offset (Z)", "Airfoil"])
         self.wing_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.wing_table.setStyleSheet("QTableWidget { background-color: #2D2D2D; color: #FFFFFF; }")
@@ -529,7 +526,6 @@ class AirshipGUI(QMainWindow):
         s_layout.addWidget(self.wing_table)
         main_layout.addWidget(station_group, 1)
 
-        # Initialize with standard Root and Tip
         self._add_wing_station(0.0, 5.0, 2.0, 0.0, 0.0)
         self._add_wing_station(10.0, 2.0, -2.0, 2.58, 0.87)
 
@@ -542,7 +538,6 @@ class AirshipGUI(QMainWindow):
         self.wing_table.setItem(row, 3, QTableWidgetItem(f"{x:.2f}"))
         self.wing_table.setItem(row, 4, QTableWidgetItem(f"{z:.2f}"))
 
-        # Airfoil Selector (Pulls directly from the Airfoil Workspace)
         combo = QComboBox()
         if hasattr(self, 'airfoil_library'):
             combo.addItems(list(self.airfoil_library.keys()))
@@ -565,17 +560,15 @@ class AirshipGUI(QMainWindow):
 
     def _remove_wing_station(self):
         row = self.wing_table.rowCount()
-        if row > 2:  # Prevent removing the last 2 stations (need at least root and tip)
+        if row > 2:
             self.wing_table.removeRow(row - 1)
 
     def setup_airfoil_tab(self):
-        # Initialize the Central Asset Library
         self.airfoil_library = {}
 
         main_layout = QVBoxLayout(self.airfoil_tab)
         self.airfoil_splitter = QSplitter(Qt.Horizontal)
 
-        # --- LEFT PANE (The Asset Manager Workspace) ---
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
 
@@ -603,14 +596,12 @@ class AirshipGUI(QMainWindow):
         left_layout.addLayout(btn_layout)
         left_layout.addWidget(self.btn_remove_airfoil)
 
-        # --- RIGHT PANE (Editor & Preview) ---
         right_pane = QWidget()
         right_layout = QVBoxLayout(right_pane)
 
         self.af_editor_group = QGroupBox("Selected Airfoil Properties")
         editor_layout = QGridLayout(self.af_editor_group)
 
-        # Dynamic Inputs
         self.inputs["AF_METHOD"] = QComboBox()
         self.inputs["AF_METHOD"].addItems(["Auto (Best Fit)", "cst", "parsec"])
         self.inputs["AF_THICKNESS"] = LabeledSlider("NACA Thickness (%)", 1.0, 50.0, 12.0, 0.1, 1)
@@ -620,7 +611,6 @@ class AirshipGUI(QMainWindow):
         self.inputs["AF_TY"] = LabeledSlider("Translation Y", -50.0, 50.0, 0.0, 0.01, 2)
         self.inputs["AF_ROT"] = LabeledSlider("Rotation Angle (°)", -180.0, 180.0, 0.0, 0.1, 1)
 
-        # Connect all changes to the sync function
         self.inputs["AF_METHOD"].currentIndexChanged.connect(self._sync_airfoil_props)
         for key in ["AF_THICKNESS", "AF_RES", "AF_SCALE", "AF_TX", "AF_TY", "AF_ROT"]:
             self.inputs[key].value_changed_by_user.connect(self._sync_airfoil_props)
@@ -637,7 +627,6 @@ class AirshipGUI(QMainWindow):
 
         right_layout.addWidget(self.af_editor_group)
 
-        # Plot
         plot_group = QGroupBox("Geometry Preview")
         plot_layout = QVBoxLayout(plot_group)
         self.airfoil_fig = Figure(facecolor='#1e1e1e', tight_layout=True)
@@ -668,7 +657,6 @@ class AirshipGUI(QMainWindow):
         for filepath in files:
             if os.path.getsize(filepath) == 0: continue
 
-            # Simple validation
             valid_lines = sum(1 for line in open(filepath, 'r') if len(line.strip().replace(',', ' ').split()) >= 2)
             if valid_lines < 10: continue
 
@@ -689,26 +677,21 @@ class AirshipGUI(QMainWindow):
         self._sync_wing_dropdowns()
 
     def _add_naca_profile(self):
-        # 1. Prompt the user for the NACA 4-digit number
         text, ok = QInputDialog.getText(self, "Add NACA Airfoil", "Enter NACA 4-digit symmetric series (e.g., 0012, 0015, 0021):")
 
         if ok and text.strip():
             naca_str = text.strip()
 
-            # Basic validation: ensure it's a number and has at least 2 digits to extract thickness
             if not naca_str.isdigit() or len(naca_str) < 2:
                 QMessageBox.warning(self, "Invalid Input", "Please enter a valid NACA number (e.g., 0012).")
                 return
 
-            # 2. Extract thickness from the last two digits (e.g., "0015" -> 15.0)
             thickness = float(naca_str[-2:])
 
-            # Enforce symmetric limitation based on STRATOS's native NACA capabilities
             if len(naca_str) == 4 and not naca_str.startswith("00"):
                 self.log.append(f"[WARNING] STRATOS native generator supports symmetric profiles. Defaulting to NACA 00{int(thickness):02d}.")
                 naca_str = f"00{int(thickness):02d}"
 
-            # 3. Handle naming and duplicates
             name = f"NACA_{naca_str}"
             count = 1
             base_name = name
@@ -716,23 +699,18 @@ class AirshipGUI(QMainWindow):
                 name = f"{base_name}_{count}"
                 count += 1
 
-            # 4. Add to the Asset Manager library
             self.airfoil_library[name] = {
                 "type": "NACA", "thickness": thickness,
                 "res": 100, "scale": 1.0, "tx": 0.0, "ty": 0.0, "rot": 0.0
             }
 
-            # 5. Add to UI list and trigger the auto-plot
             self.airfoil_list.addItem(name)
-
-            # Setting the current row automatically triggers _on_airfoil_selected(),
-            # which in turn calls _generate_and_plot_airfoil() to show the plot!
             self.airfoil_list.setCurrentRow(self.airfoil_list.count() - 1)
             self._sync_wing_dropdowns()
 
     def _remove_airfoil(self):
         item = self.airfoil_list.currentItem()
-        if item and len(self.airfoil_library) > 1: # Prevent deleting the last airfoil
+        if item and len(self.airfoil_library) > 1:
             name = item.text()
             del self.airfoil_library[name]
             self.airfoil_list.takeItem(self.airfoil_list.row(item))
@@ -746,7 +724,6 @@ class AirshipGUI(QMainWindow):
         name = current.text()
         data = self.airfoil_library[name]
 
-        # Block signals to update sliders without triggering recursion
         self._block_af_signals(True)
         if data["type"] == "FILE":
             self.inputs["AF_METHOD"].setCurrentText(data["method"])
@@ -809,7 +786,6 @@ class AirshipGUI(QMainWindow):
             else:
                 x, y = get_airfoil_points(thickness=data["thickness"], resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
 
-            # Plot
             self.airfoil_fig.clear()
             ax = self.airfoil_fig.add_subplot(111)
             ax.plot(x, y, color='#00BFFF', linewidth=2, marker='o', markersize=3)
@@ -829,7 +805,6 @@ class AirshipGUI(QMainWindow):
         is_naca = series == "NACA"
         is_dragon = series == "DRAGON_DREAM"
 
-        # Removed 'l2d' from this list since NACA also needs it
         gertler_widgets = ["m1", "r0", "r1", "cp"]
         dragon_widgets = ["HULL_WIDTH", "HULL_HEIGHT", "BOTTOM_FLATNESS"]
 
@@ -839,14 +814,12 @@ class AirshipGUI(QMainWindow):
         for k in dragon_widgets:
             if k in self.inputs: self.inputs[k].setVisible(is_dragon)
 
-        # Explicitly keep l2d visible for both GERTLER and NACA, but hide for DRAGON_DREAM
         if "l2d" in self.inputs:
             self.inputs["l2d"].setVisible(not is_dragon)
 
         self.preset_combo.setVisible(not is_naca and not is_dragon)
         self.preset_label.setVisible(not is_naca and not is_dragon)
 
-        # Disable the 2D Petal Plot button for Dragon Dream
         if hasattr(self, 'btn_plot'):
             self.btn_plot.setEnabled(not is_dragon)
 
@@ -854,17 +827,14 @@ class AirshipGUI(QMainWindow):
         self.aerostat_tab = QWidget()
         tab_layout = QVBoxLayout(self.aerostat_tab)
 
-        # Create the Scroll Area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
 
-        # Container widget for all the content
         content_widget = QWidget()
         content_widget.setStyleSheet("background-color: #1e1e1e;")
         layout = QVBoxLayout(content_widget)
 
-        # 1. Atmospheric Conditions
         env_grp = QGroupBox("Atmospheric Conditions")
         el = QGridLayout(env_grp)
         self.inputs["OPERATIONAL_HEIGHT"] = LabeledSlider("Op. Altitude (m)", 0, 20000, 4500, 10, 0)
@@ -875,7 +845,6 @@ class AirshipGUI(QMainWindow):
         el.addWidget(self.inputs["MARGIN_HEIGHT"], 1, 0)
         layout.addWidget(env_grp)
 
-        # 2. Lifting Gas Properties
         gas_grp = QGroupBox("Lifting Gas Properties")
         gl = QGridLayout(gas_grp)
         self.inputs["GAS_PURITY"] = LabeledSlider("Purity (0-1)", 0.8, 1, 0.97, 0.001, 3)
@@ -883,8 +852,7 @@ class AirshipGUI(QMainWindow):
         self.inputs["DELTA_P"] = LabeledSlider("Delta P (Pa)", 0, 1000, 500, 1, 0)
         self.inputs["DELTA_T"] = LabeledSlider("Delta T (K)", 0, 20, 5, 0.1, 1)
         self.inputs["GAS_GAMMA"] = LabeledSlider("Adiabatic Index (\u03B3)", 1.0, 2.0, 1.667, 0.001, 3)
-        self.inputs["CALC_DELTA_T"] = QCheckBox("Calculate delta T from thermal model")
-        self.inputs["CALC_DELTA_T"].setChecked(False)
+        self.inputs["CALC_DELTA_T"] = self._create_checkbox("Calculate delta T from thermal model")
         self.inputs["CALC_DELTA_T"].toggled.connect(lambda checked: self.inputs["DELTA_T"].setEnabled(not checked))
         gl.addWidget(self.inputs["GAS_PURITY"], 0, 0)
         gl.addWidget(self.inputs["GAS_CONSTANT"], 0, 1)
@@ -894,7 +862,6 @@ class AirshipGUI(QMainWindow):
         gl.addWidget(self.inputs["CALC_DELTA_T"], 2, 1)
         layout.addWidget(gas_grp)
 
-        # 3. Ballonet Configuration
         ballonet_grp = QGroupBox("Ballonet Configuration")
         bl = QGridLayout(ballonet_grp)
         self.inputs["BALLONET_NUMBER"] = LabeledSlider("Number of Ballonets", 0, 4, 2, 1, 0)
@@ -907,27 +874,20 @@ class AirshipGUI(QMainWindow):
         bl.addWidget(self.inputs["BALLONET_FABRIC_DENSITY"], 1, 1)
         layout.addWidget(ballonet_grp)
 
-        # 4. Mass and Structural Design
         mass_grp = QGroupBox("Mass and Structural Design")
         ml = QGridLayout(mass_grp)
         self.inputs["SKIN_DENSITY"] = LabeledSlider("Skin Density (kg/m²)", 0.1, 2.0, 0.75, 0.01, 2)
         self.inputs["PAYLOAD_MASS"] = LabeledSlider("Payload/Add. Mass (kg)", 0, 5000, 220, 1, 1)
         self.inputs["SKIN_THICKNESS"] = LabeledSlider("Skin Thick. (mm)", 0.1, 5.0, 1.0, 0.1, 2)
 
-        # Tether Mass Controls
-        self.inputs["INCLUDE_TETHER"] = QCheckBox("INCLUDE TETHER MASS")
-        self.inputs["INCLUDE_TETHER"].setChecked(True)
-        self.inputs["INCLUDE_TETHER"].setStyleSheet("color: #00BFFF; font-weight: bold;")
+        self.inputs["INCLUDE_TETHER"] = self._create_checkbox("INCLUDE TETHER MASS", checked=True, bold=True)
         self.inputs["INCLUDE_TETHER"].toggled.connect(self._toggle_tether_inputs)
 
         self.inputs["TETHER_DENSITY"] = LabeledSlider("Tether Density (kg/m)", 0, 5, 0.1, 0.01, 2)
         self.inputs["TETHER_FRACTION"] = LabeledSlider("Tether Fraction (0-1)", 0, 1, 1.0, 0.01, 2)
         self.inputs["TARGET_NET_LIFT"] = LabeledSlider("Target Net Lift (N)", -1000, 5000, 0, 1, 1)
 
-        self.inputs["OPTIMIZE_LENGTH"] = QCheckBox("OPTIMIZE LENGTH FOR TARGET LIFT")
-        self.inputs["OPTIMIZE_LENGTH"].setChecked(True)
-        self.inputs["OPTIMIZE_LENGTH"].setFont(QFont("Arial", 10, QFont.Bold))
-        # Dim the Target Net Lift slider if Optimize Length is unchecked
+        self.inputs["OPTIMIZE_LENGTH"] = self._create_checkbox("OPTIMIZE LENGTH FOR TARGET LIFT", checked=True, bold=True)
         self.inputs["OPTIMIZE_LENGTH"].toggled.connect(lambda checked: self.inputs["TARGET_NET_LIFT"].setEnabled(checked))
 
         ml.addWidget(self.inputs["SKIN_DENSITY"], 0, 0)
@@ -940,11 +900,9 @@ class AirshipGUI(QMainWindow):
         ml.addWidget(self.inputs["OPTIMIZE_LENGTH"], 4, 0, 1, 2)
         layout.addWidget(mass_grp)
 
-        # 5. Thermal & Stress Analysis Inputs
         thermal_grp = QGroupBox("Thermal & Stress Analysis")
         tl = QGridLayout(thermal_grp)
 
-        # New direct inputs for material properties
         self.inputs["CTE"] = LabeledSlider("CTE (x10^-5 /K)", 0.1, 10.0, 2.3, 0.1, 2)
         self.inputs["ELASTIC_MODULUS"] = LabeledSlider("Elastic Modulus (MPa)", 10.0, 500.0, 75.0, 1.0, 1)
         self.inputs["STRENGTH"] = LabeledSlider("Strength (MPa)", 10.0, 500.0, 75.0, 1.0, 1)
@@ -977,7 +935,6 @@ class AirshipGUI(QMainWindow):
 
         layout.addStretch()
 
-        # Finalize the Scroll Area
         scroll.setWidget(content_widget)
         tab_layout.addWidget(scroll)
 
@@ -996,30 +953,23 @@ class AirshipGUI(QMainWindow):
         is_aero = (mode_id == 4)
         is_multi = self.lobe_button_group.checkedId() > 1 and not is_balloon
 
-        # --- Check if wings are enabled ---
         is_winged = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked() and not is_balloon
 
-        # Toggle Input group visibility
         self.hull_shape_box.setHidden(is_balloon)
         self.balloon_params_box.setHidden(not is_balloon)
         self.hull_config_group.setHidden(is_balloon)
         self.length_box.setHidden(not is_standard)
         self.volume_box.setHidden(not (is_vol or is_balloon))
-        self.appendages_box.setHidden(is_balloon) # Hide the wing toggle in balloon mode
+        self.appendages_box.setHidden(is_balloon)
 
-        # --- FIX: Toggle Output Tab Panels based on Mode ---
         if hasattr(self, 'aero_analysis_group'):
-            # Show graphs and CSV button only in Aerostat Mode
             self.aero_analysis_group.setVisible(is_aero)
             self.btn_csv.setVisible(is_aero)
 
-            # Hide 3D Viewer, Added Mass Matrix, and 2D Plot button in Aerostat Mode
             self.preview_group.setVisible(not is_aero)
             self.matrix_group.setVisible(not is_aero)
             self.btn_plot.setVisible(not is_aero)
-        # ---------------------------------------------------
 
-        # Update available tabs
         curr = self.tab_widget.currentIndex()
         self.tab_widget.clear()
         self.tab_widget.addTab(self.primary_input_tab, "Envelope Geometry")
@@ -1064,9 +1014,7 @@ class AirshipGUI(QMainWindow):
         main_layout = QVBoxLayout(self.fin_tab)
         main_layout.setContentsMargins(15, 15, 15, 15)
 
-        self.inputs["INCLUDE_FINS"] = QCheckBox("GENERATE FINS WITH HULL")
-        self.inputs["INCLUDE_FINS"].setObjectName("FinToggle")
-        self.inputs["INCLUDE_FINS"].setChecked(True)
+        self.inputs["INCLUDE_FINS"] = self._create_checkbox("GENERATE FINS WITH HULL", checked=True, bold=True)
         self.inputs["INCLUDE_FINS"].toggled.connect(self._toggle_fin_inputs)
         main_layout.addWidget(self.inputs["INCLUDE_FINS"])
 
@@ -1137,9 +1085,7 @@ class AirshipGUI(QMainWindow):
         self.inputs["N_PETALS"] = LabeledSlider("Gores/Petals", 2, 200, 8, 1, 0)
         left_layout.addWidget(self.inputs["N_PETALS"])
 
-        self.inputs["COMPUTE_ADDED_MASS"] = QCheckBox("COMPUTE ADDED MASS (May slow down process)")
-        self.inputs["COMPUTE_ADDED_MASS"].setChecked(True)
-        self.inputs["COMPUTE_ADDED_MASS"].setFont(QFont("Arial", 9, QFont.Bold))
+        self.inputs["COMPUTE_ADDED_MASS"] = self._create_checkbox("COMPUTE ADDED MASS (May slow down process)", checked=True, bold=True)
         left_layout.addWidget(self.inputs["COMPUTE_ADDED_MASS"])
 
         self.format_button_group = QButtonGroup(self)
@@ -1176,7 +1122,6 @@ class AirshipGUI(QMainWindow):
         prop_group = QGroupBox("Geometric Properties")
         prop_layout = QGridLayout(prop_group)
         self.prop_outputs = {}
-        # UPDATED: Added CV to labels and keys
         labels = ["Vol (m³):", "Surf (m²):", "Top (m²):", "Side (m²):", "CV (x, y):"]
         keys = ["vol", "surf", "top_area", "side_area", "cv"]
 
@@ -1212,23 +1157,19 @@ class AirshipGUI(QMainWindow):
         self.aero_analysis_group.hide()
         aero_vbox = QVBoxLayout(self.aero_analysis_group)
 
-        # --- NEW: Grid layout for overlaying buttons directly on top of plots ---
         overlay_layout = QGridLayout()
         overlay_layout.setContentsMargins(0, 0, 0, 0)
 
         self.plot_stack = QStackedWidget()
 
-        # Tile 1: First 6 plots
         self.fig1 = Figure(facecolor='#1e1e1e', tight_layout=True)
         self.canvas1 = FigureCanvas(self.fig1)
         self.plot_stack.addWidget(self.canvas1)
 
-        # Tile 2: Remaining 1 plot
         self.fig2 = Figure(facecolor='#1e1e1e', tight_layout=True)
         self.canvas2 = FigureCanvas(self.fig2)
         self.plot_stack.addWidget(self.canvas2)
 
-        # Left Arrow Button - Floating Overlay
         self.btn_plot_prev = QPushButton("<")
         self.btn_plot_prev.setFixedSize(40, 80)
         self.btn_plot_prev.setCursor(Qt.PointingHandCursor)
@@ -1238,7 +1179,6 @@ class AirshipGUI(QMainWindow):
             QPushButton:disabled { color: transparent; background-color: transparent; }
         """)
 
-        # Right Arrow Button - Floating Overlay
         self.btn_plot_next = QPushButton(">")
         self.btn_plot_next.setFixedSize(40, 80)
         self.btn_plot_next.setCursor(Qt.PointingHandCursor)
@@ -1248,12 +1188,11 @@ class AirshipGUI(QMainWindow):
             QPushButton:disabled { color: transparent; background-color: transparent; }
         """)
 
-        self.btn_plot_prev.setEnabled(False) # Start on Tile 1
+        self.btn_plot_prev.setEnabled(False)
 
         self.btn_plot_prev.clicked.connect(self._plot_page_prev)
         self.btn_plot_next.clicked.connect(self._plot_page_next)
 
-        # Stack the widgets in the exact same cell (0, 0)
         overlay_layout.addWidget(self.plot_stack, 0, 0)
         overlay_layout.addWidget(self.btn_plot_prev, 0, 0, alignment=Qt.AlignLeft | Qt.AlignVCenter)
         overlay_layout.addWidget(self.btn_plot_next, 0, 0, alignment=Qt.AlignRight | Qt.AlignVCenter)
@@ -1276,13 +1215,11 @@ class AirshipGUI(QMainWindow):
         main_tab_layout = QVBoxLayout(self.output_tab)
         main_tab_layout.addWidget(self.splitter)
 
-        # --- UPDATED SIGNAL CONNECTIONS FOR AUTO-UPDATE ---
         geo_keys = [
             "l2d", "m1", "r0", "r1", "cp", "ENVELOPE_LENGTH", "VOLUME",
             "LOBE_OFFSET_X_SLIDER", "LOBE_OFFSET_Y_SLIDER", "LOBE_OFFSET_Z_SLIDER",
             "FIN_RC_LENGTH", "FIN_HEIGHT", "FIN_THICKNESS", "FIN_TAPER_RATIO",
             "FIN_NUMBER",
-            # --- NEW: ALL Wing Keys Included ---
             "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_THICKNESS",
             "WING_SWEEP", "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP"
         ]
@@ -1293,7 +1230,6 @@ class AirshipGUI(QMainWindow):
                     self.inputs[key].value_changed_by_user.connect(self._auto_update_props)
 
         self.inputs["INCLUDE_FINS"].toggled.connect(self._auto_update_props)
-        # --- NEW: Connect Wing Toggle ---
         if "INCLUDE_WINGS" in self.inputs:
             self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
 
