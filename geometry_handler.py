@@ -797,3 +797,117 @@ def length_scaling (volume_function, target_volume, initial_estimate):
         return (target_volume - volume) / target_volume
     
     return fsolve(f, initial_estimate)[0]
+
+class UnifiedAsymmetricEnvelope(Envelope):
+    """
+    Unified LTA envelope generator (Alam, SSRN 7274120).
+    Represents an asymmetric hull utilizing three directional scaling factors
+    and three discrete Gertler profile parameter sets.
+    """
+    def __init__(self, p_matrix, scales, length, n=100):
+        # p_matrix: 3x4 array -> [m, r0, r1, Cp] for Lateral, Dorsal, Ventral
+        # scales: [alpha, beta, gamma] -> Lateral width, 2x Upper Height, 2x Lower Height
+        self.p_matrix = np.array(p_matrix)
+        self.scales = np.array(scales)
+        self.length = length
+
+        # Use beta (dorsal height max) as the nominal diameter for the base class
+        super().__init__(length, self.scales[1], n)
+
+        # Solve Gertler polynomials for all 3 profiles
+        self.coeffs = np.zeros((3, 6))
+        for k in range(3):
+            m, r0, r1, cp = self.p_matrix[k]
+            A = np.array([
+                [1, 0, 0, 0, 0, 0],
+                [1, 1, 1, 1, 1, 1],
+                [m, m**2, m**3, m**4, m**5, m**6],
+                [1, 2*m, 3*m**2, 4*m**3, 5*m**4, 6*m**5],
+                [1, 2, 3, 4, 5, 6],
+                [1/2, 1/3, 1/4, 1/5, 1/6, 1/7]
+            ], float)
+            B = np.array([2*r0, 0, 1/4, 0, -2*r1, 1/4*cp], float).T
+            self.coeffs[k] = np.linalg.solve(A, B)
+
+    def _get_radii(self, x):
+        """Returns (r_lat, r_dorsal, r_ventral) for a given axial station x."""
+        x_norm = np.clip(x / self.length, 0, 1)
+        scalar = np.isscalar(x)
+        x_norm = np.atleast_1d(x_norm)
+        radii = np.zeros((x_norm.shape[0], 3))
+
+        for k in range(3):
+            ordered = np.append(self.coeffs[k][::-1], 0) # Append a0 = 0
+            q = np.maximum(np.polyval(ordered, x_norm), 0)
+            radii[:, k] = self.scales[k] * np.sqrt(q)
+
+        return radii[0] if scalar else radii
+
+    def at(self, x):
+        """Returns the upper (dorsal) radius at x for fin and wing placement logic."""
+        return self._get_radii(x)[1]
+
+    def volume(self):
+        x = np.linspace(0, self.length, self.n)
+        r = self._get_radii(x)
+        # Cross-sectional area of two half-ellipses sharing a lateral semi-axis
+        A = (np.pi / 2) * r[:, 0] * (r[:, 1] + r[:, 2])
+        return np.trapezoid(A, x)
+
+    def surface_area(self):
+        x = np.linspace(0, self.length, self.n)
+        theta = np.linspace(-np.pi, np.pi, 121)[:-1] # Drop duplicate seam
+        r = self._get_radii(x)
+
+        TH, R_lat = np.meshgrid(theta, r[:, 0])
+        _, R_top = np.meshgrid(theta, r[:, 1])
+        _, R_bot = np.meshgrid(theta, r[:, 2])
+        XX, _ = np.meshgrid(theta, x)
+
+        Y = R_lat * np.cos(TH)
+        Z = (R_top * (np.sin(TH) >= 0) + R_bot * (np.sin(TH) < 0)) * np.sin(TH)
+
+        # Vectorized 3D surface area integration
+        p1 = np.stack((XX[:-1, :], Y[:-1, :], Z[:-1, :]), axis=2)
+        p2 = np.stack((XX[1:, :], Y[1:, :], Z[1:, :]), axis=2)
+        p3 = np.roll(p2, -1, axis=1)
+        p4 = np.roll(p1, -1, axis=1)
+
+        a1 = 0.5 * np.linalg.norm(np.cross(p2 - p1, p3 - p1, axis=2), axis=2)
+        a2 = 0.5 * np.linalg.norm(np.cross(p3 - p1, p4 - p1, axis=2), axis=2)
+
+        return np.sum(a1) + np.sum(a2)
+
+    def cv(self):
+        x = np.linspace(0, self.length, self.n)
+        r = self._get_radii(x)
+        A = (np.pi / 2) * r[:, 0] * (r[:, 1] + r[:, 2])
+        vol = np.trapezoid(A, x)
+
+        x_cb = np.trapezoid(x * A, x) / vol
+        z_moment = (2/3) * r[:, 0] * (r[:, 1]**2 - r[:, 2]**2)
+        z_cb = np.trapezoid(z_moment, x) / vol
+
+        return x_cb, z_cb
+
+    def side_projected_area(self):
+        x = np.linspace(0, self.length, self.n)
+        r = self._get_radii(x)
+        return np.trapezoid(r[:, 1] + r[:, 2], x)
+
+    def top_projected_area(self):
+        x = np.linspace(0, self.length, self.n)
+        r = self._get_radii(x)
+        return 2 * np.trapezoid(r[:, 0], x)
+
+    @classmethod
+    def from_parameters(cls, params, length, n=100):
+        # params unpacked as (p_matrix, scales)
+        p_matrix, scales = params
+        return cls(p_matrix, scales, length, n)
+
+    def set_length(self, l):
+        scale_factor = l / self.length
+        self.scales = self.scales * scale_factor
+        self.diameter = self.scales[1]
+        self.length = l
