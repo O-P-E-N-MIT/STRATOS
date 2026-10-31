@@ -3,7 +3,7 @@ import subprocess
 import math
 import numpy as np
 
-from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope
+from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope, UnifiedAsymmetricEnvelope
 from meshlab_handler import apply_filters, get_meshdata
 from added_mass import compute_added_mass
 from airfoil import get_airfoil_points
@@ -25,7 +25,8 @@ with open(os.path.join(DIR_PATH, BASE_SCRIPT_FILE), 'r') as f:
 ENVELOPE_SERIES = {
     "GERTLER": GertlerEnvelope,
     "NACA": NACAEnvelope,
-    "DRAGON_DREAM": DragonDreamEnvelope
+    "DRAGON_DREAM": DragonDreamEnvelope,
+    "UNIFIED_ASYMMETRIC": UnifiedAsymmetricEnvelope
 }
 
 class AirshipGeometry:
