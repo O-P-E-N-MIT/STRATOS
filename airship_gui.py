@@ -397,7 +397,7 @@ class AirshipGUI(QMainWindow):
 
         self.inputs["ENVELOPE_SERIES"] = QComboBox()
         self.inputs["ENVELOPE_SERIES"].setObjectName("LargeDropdown")
-        self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA", "DRAGON_DREAM"])
+        self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA", "DRAGON_DREAM", "UNIFIED_ASYMMETRIC"])
         self.inputs["ENVELOPE_SERIES"].setMinimumHeight(45)
         self.inputs["ENVELOPE_SERIES"].currentIndexChanged.connect(self._update_series_visibility)
 
@@ -800,28 +800,31 @@ class AirshipGUI(QMainWindow):
             self.log.append(f"[ERROR] Plot failed: {e}")
 
     def _update_series_visibility(self):
-        """Toggles visibility of inputs based on selected Envelope Series (Gertler/NACA/Dragon Dream)."""
+        """Toggles visibility of inputs based on selected Envelope Series."""
         series = self.inputs["ENVELOPE_SERIES"].currentText()
         is_naca = series == "NACA"
         is_dragon = series == "DRAGON_DREAM"
+        is_unified = series == "UNIFIED_ASYMMETRIC"
 
         gertler_widgets = ["m1", "r0", "r1", "cp"]
         dragon_widgets = ["HULL_WIDTH", "HULL_HEIGHT", "BOTTOM_FLATNESS"]
 
         for k in gertler_widgets:
-            if k in self.inputs: self.inputs[k].setVisible(not is_naca and not is_dragon)
+            if k in self.inputs: self.inputs[k].setVisible(not is_naca and not is_dragon and not is_unified)
 
         for k in dragon_widgets:
             if k in self.inputs: self.inputs[k].setVisible(is_dragon)
 
+        # Explicitly hide l2d for DRAGON_DREAM and UNIFIED_ASYMMETRIC
         if "l2d" in self.inputs:
-            self.inputs["l2d"].setVisible(not is_dragon)
+            self.inputs["l2d"].setVisible(not is_dragon and not is_unified)
 
-        self.preset_combo.setVisible(not is_naca and not is_dragon)
-        self.preset_label.setVisible(not is_naca and not is_dragon)
+        self.preset_combo.setVisible(not is_naca and not is_dragon and not is_unified)
+        self.preset_label.setVisible(not is_naca and not is_dragon and not is_unified)
 
+        # Disable the 2D Petal Plot button for 3D asymmetric shapes
         if hasattr(self, 'btn_plot'):
-            self.btn_plot.setEnabled(not is_dragon)
+            self.btn_plot.setEnabled(not is_dragon and not is_unified)
 
     def setup_aerostat_tab(self):
         self.aerostat_tab = QWidget()
@@ -1638,10 +1641,21 @@ class AirshipGUI(QMainWindow):
                 self.log.append(f"[ERROR] Failed to compile wing stations: {e}")
                 return None
 
+        # 1. OVERRIDE PARAMETERS REGARDLESS OF DIMENSIONING MODE
         p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
 
+        if p["ENVELOPE_SERIES"] == "UNIFIED_ASYMMETRIC":
+            p_matrix = [
+                [0.45, 0.60, 0.45, 0.68], # Lateral
+                [0.45, 0.55, 0.40, 0.62], # Dorsal (Upper)
+                [0.43, 0.60, 0.40, 0.66]  # Ventral (Lower)
+            ]
+            scales = [30.0, 14.0, 22.0]   # Alpha, Beta, Gamma
+            p["ENVELOPE_PARAMS"] = (p_matrix, scales)
+
+        # 2. VOLUMETRIC MODE SIZING LOGIC
         if self.mode_button_group.checkedId() == 2:
-            from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope
+            from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope, UnifiedAsymmetricEnvelope
 
             if p["ENVELOPE_SERIES"] == "NACA":
                 temp_env = NACAEnvelope.from_parameters((p["l2d"],), 1, int(p["ENVELOPE_RESOLUTION"]))
@@ -1664,6 +1678,21 @@ class AirshipGUI(QMainWindow):
 
             elif p["ENVELOPE_SERIES"] == "DRAGON_DREAM":
                 pass
+
+            elif p["ENVELOPE_SERIES"] == "UNIFIED_ASYMMETRIC":
+                # Create a baseline reference hull at L=100m to evaluate the volume ratio
+                temp_env = UnifiedAsymmetricEnvelope.from_parameters(
+                    p["ENVELOPE_PARAMS"], 100.0, int(p["ENVELOPE_RESOLUTION"])
+                )
+
+                # Scale length proportionally using V_new = s^3 * V_ref
+                target_volume = self.inputs["VOLUME"].get_value()
+                reference_volume = temp_env.volume()
+                scale_factor = (target_volume / reference_volume) ** (1/3)
+
+                new_length = 100.0 * scale_factor
+                p["ENVELOPE_LENGTH"] = new_length
+                self.inputs["ENVELOPE_LENGTH"].set_value(new_length)
 
         hull_len = p.get("ENVELOPE_LENGTH", 100)
         req_le = (p.get("FIN_AXIAL_OFFSET", 80) / 100.0) * hull_len
