@@ -152,6 +152,34 @@ try:
 
             return envelope_geom, envelope
 
+        elif ENVELOPE_SERIES == "UNIFIED_ASYMMETRIC":
+            envelope_geom = geometry_handler.UnifiedAsymmetricEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
+
+            x_vals = np.linspace(0, length, ENVELOPE_RESOLUTION)
+            theta_vals = np.linspace(-np.pi, np.pi, 60)[:-1] # Drop seam
+
+            wires = []
+            for x in x_vals:
+                radii = envelope_geom._get_radii(x)
+
+                # If radius is effectively zero (nose/tail), collapse to a vertex
+                if max(radii) < 1e-6:
+                    wires.append(geompy.MakeVertex(x, 0, 0))
+                else:
+                    r_lat, r_top, r_bot = radii[0], radii[1], radii[2]
+                    pts = []
+                    for th in theta_vals:
+                        y = r_lat * math.cos(th)
+                        z = r_top * math.sin(th) if math.sin(th) >= 0 else r_bot * math.sin(th)
+                        pts.append(geompy.MakeVertex(x, y, z))
+
+                    pts.append(pts[0]) # Close the loop
+                    wires.append(safe_polyline(pts, True))
+
+            # Loft the discrete wire cross-sections into a solid hull
+            envelope = geompy.MakeThruSections(wires, True, 0.0001, False)
+            return envelope_geom, envelope
+
         # --- Axisymmetric Revolved Profiles ---
         elif ENVELOPE_SERIES == "GERTLER":
             envelope_geom = geometry_handler.GertlerEnvelope.from_parameters(params, length, ENVELOPE_RESOLUTION)
