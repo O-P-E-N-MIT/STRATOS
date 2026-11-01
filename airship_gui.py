@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import BackgroundPlotter
 from airfoil import get_airfoil_points
+from PySide6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
 
 from balloon import create_balloon_geometry
 from geometry import AirshipGeometry, plot_and_save_profile
@@ -218,6 +219,7 @@ class AirshipGUI(QMainWindow):
 
         self.refresh_tabs()
         self.load_defaults()
+        self._update_series_visibility()
 
         self.status_logger = StatusLogger()
         self.status_logger.message_logged.connect(self._append_to_log)
@@ -392,9 +394,11 @@ class AirshipGUI(QMainWindow):
         self.hull_shape_box = QGroupBox("Hull Envelope Shape")
         cl = QGridLayout(self.hull_shape_box)
 
+        # Force equal column width so hiding widgets doesn't resize columns
         cl.setColumnStretch(0, 1)
         cl.setColumnStretch(1, 1)
 
+        # --- Envelope Series Selector ---
         self.inputs["ENVELOPE_SERIES"] = QComboBox()
         self.inputs["ENVELOPE_SERIES"].setObjectName("LargeDropdown")
         self.inputs["ENVELOPE_SERIES"].addItems(["GERTLER", "NACA", "DRAGON_DREAM", "UNIFIED_ASYMMETRIC"])
@@ -404,9 +408,11 @@ class AirshipGUI(QMainWindow):
         cl.addWidget(QLabel("Profile Series:"), 0, 0)
         cl.addWidget(self.inputs["ENVELOPE_SERIES"], 0, 1, 1, 2)
 
+        # --- Existing Presets ---
         self.preset_combo = QComboBox()
         self.preset_combo.setObjectName("LargeDropdown")
         self.preset_combo.setMinimumHeight(45)
+        from geometry_handler import STANDARD_ENVELOPES
         self.preset_combo.addItems(list(STANDARD_ENVELOPES.keys()))
         self.preset_combo.currentIndexChanged.connect(self.load_preset)
 
@@ -414,6 +420,25 @@ class AirshipGUI(QMainWindow):
         cl.addWidget(self.preset_label, 1, 0)
         cl.addWidget(self.preset_combo, 1, 1, 1, 2)
 
+        # --- NEW: Asymmetric Presets ---
+        from geometry_handler import ASYMMETRIC_PRESETS
+        self.asymmetric_preset_combo = QComboBox()
+        self.asymmetric_preset_combo.setObjectName("LargeDropdown")
+        self.asymmetric_preset_combo.setMinimumHeight(45)
+        self.asymmetric_preset_combo.addItems(list(ASYMMETRIC_PRESETS.keys()))
+        self.asymmetric_preset_combo.currentIndexChanged.connect(self.load_asymmetric_preset)
+
+        self.asymmetric_preset_label = QLabel("Asymmetric Shape:")
+        cl.addWidget(self.asymmetric_preset_label, 2, 0)
+        cl.addWidget(self.asymmetric_preset_combo, 2, 1, 1, 2)
+
+        # --- NEW: Inverse Optimization Button ---
+        self.btn_inverse_opt = QPushButton("Run Inverse Shape Fitting...")
+        self.btn_inverse_opt.setStyleSheet("background-color: #3C3C3C; color: #00FF00; font-weight: bold;")
+        self.btn_inverse_opt.clicked.connect(self.run_inverse_optimization)
+        cl.addWidget(self.btn_inverse_opt, 3, 0, 1, 3)
+
+        # --- Parameters ---
         self.inputs["l2d"] = LabeledSlider("Length/Diameter Ratio (L/D)", 1, 8, 3.266, 0.0001, 4)
         self.inputs["m1"] = LabeledSlider("Max. Thickness Position (m1)", 0.3, 0.6, 0.419, 0.0001, 4)
         self.inputs["r0"] = LabeledSlider("Nose Radius (r0)", 0.01, 1, 0.337, 0.0001, 4)
@@ -424,21 +449,62 @@ class AirshipGUI(QMainWindow):
         self.inputs["HULL_HEIGHT"] = LabeledSlider("Max Height (H)", 5.0, 100.0, 14.0, 0.1, 2)
         self.inputs["BOTTOM_FLATNESS"] = LabeledSlider("Bottom Flatness %", 0.0, 100.0, 25.0, 1.0, 0)
 
-        cl.addWidget(self.inputs["HULL_WIDTH"], 5, 0)
-        cl.addWidget(self.inputs["HULL_HEIGHT"], 5, 1)
-        cl.addWidget(self.inputs["BOTTOM_FLATNESS"], 6, 0)
+        # Row 4: L/D and m1
+        cl.addWidget(self.inputs["l2d"], 4, 0)
+        cl.addWidget(self.inputs["m1"], 4, 1)
 
-        cl.addWidget(self.inputs["l2d"], 2, 0)
-        cl.addWidget(self.inputs["m1"], 2, 1)
+        # Row 5: Resolution and r0
+        cl.addWidget(self.inputs["ENVELOPE_RESOLUTION"], 5, 0)
+        cl.addWidget(self.inputs["r0"], 5, 1)
 
-        cl.addWidget(self.inputs["ENVELOPE_RESOLUTION"], 3, 0)
-        cl.addWidget(self.inputs["r0"], 3, 1)
+        # Row 6: r1 and cp
+        cl.addWidget(self.inputs["r1"], 6, 0)
+        cl.addWidget(self.inputs["cp"], 6, 1)
 
-        cl.addWidget(self.inputs["r1"], 4, 0)
-        cl.addWidget(self.inputs["cp"], 4, 1)
+        # Row 7: HULL_WIDTH and HULL_HEIGHT
+        cl.addWidget(self.inputs["HULL_WIDTH"], 7, 0)
+        cl.addWidget(self.inputs["HULL_HEIGHT"], 7, 1)
+
+        # Row 8: BOTTOM_FLATNESS
+        cl.addWidget(self.inputs["BOTTOM_FLATNESS"], 8, 0)
 
         layout.addWidget(self.hull_shape_box)
 
+        # --- NEW: Asymmetric Parameter Matrix (15 Sliders) ---
+        self.asym_param_box = QGroupBox("Asymmetric Profile Parameters")
+        asym_layout = QGridLayout(self.asym_param_box)
+
+        asym_layout.addWidget(QLabel("Parameter"), 0, 0)
+        asym_layout.addWidget(QLabel("Lateral (Y-width)"), 0, 1)
+        asym_layout.addWidget(QLabel("Dorsal (Z-upper)"), 0, 2)
+        asym_layout.addWidget(QLabel("Ventral (Z-lower)"), 0, 3)
+
+        self.asym_inputs = {}
+        params_info = [
+            ("m", "Max Thickness Pos (m)", 0.2, 0.8, 0.45, 0.0001, 4),
+            ("r0", "Nose Radius (r0)", 0.01, 1.0, 0.5, 0.0001, 4),
+            ("r1", "Tail Radius (r1)", 0.01, 1.0, 0.5, 0.0001, 4),
+            ("cp", "Prismatic Coeff (Cp)", 0.4, 0.8, 0.65, 0.0001, 4),
+            ("scale", "Max Diameter Scale", 1.0, 200.0, 20.0, 0.1, 2)
+        ]
+
+        row = 1
+        for key, name, v_min, v_max, default_val, step, dec in params_info:
+            asym_layout.addWidget(QLabel(name), row, 0)
+            for prefix in ["lat", "dor", "ven"]:
+                slider = LabeledSlider("", v_min, v_max, default_val, step, dec)
+                slider.setStyleSheet("QGroupBox { border: none; margin-top: 0px; padding-top: 0px; }")
+                self.asym_inputs[f"{prefix}_{key}"] = slider
+                slider.value_changed_by_user.connect(self._auto_update_props)
+
+            asym_layout.addWidget(self.asym_inputs[f"lat_{key}"], row, 1)
+            asym_layout.addWidget(self.asym_inputs[f"dor_{key}"], row, 2)
+            asym_layout.addWidget(self.asym_inputs[f"ven_{key}"], row, 3)
+            row += 1
+
+        layout.addWidget(self.asym_param_box)
+
+        # --- Balloon Geometry Box ---
         self.balloon_params_box = QGroupBox("Balloon Geometry Parameters")
         bl = QGridLayout(self.balloon_params_box)
         self.inputs["GORE_MODEL"] = QComboBox()
@@ -464,6 +530,7 @@ class AirshipGUI(QMainWindow):
         bl.addWidget(self.inputs["PHI_RES"], 4, 1)
         layout.addWidget(self.balloon_params_box)
 
+        # --- Length / Volume Boxes ---
         self.length_box = QGroupBox("Standard Mode: Length (m)")
         ll = QVBoxLayout(self.length_box)
         self.inputs["ENVELOPE_LENGTH"] = LabeledSlider("Length (L)", 0, 500, 100, 0.0001, 4)
@@ -476,10 +543,14 @@ class AirshipGUI(QMainWindow):
         vl.addWidget(self.inputs["VOLUME"])
         layout.addWidget(self.volume_box)
 
+        # --- Appendages Box ---
         self.appendages_box = QGroupBox("Hull Appendages")
         al = QVBoxLayout(self.appendages_box)
 
-        self.inputs["INCLUDE_WINGS"] = self._create_checkbox("GENERATE WING WITH HULL", bold=True)
+        self.inputs["INCLUDE_WINGS"] = QCheckBox("GENERATE WING WITH HULL")
+        self.inputs["INCLUDE_WINGS"].setChecked(False)
+        self.inputs["INCLUDE_WINGS"].setFont(QFont("Arial", 10, QFont.Bold))
+        self.inputs["INCLUDE_WINGS"].setStyleSheet("color: #00BFFF;")
 
         self.inputs["INCLUDE_WINGS"].toggled.connect(self.refresh_tabs)
         self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
@@ -582,7 +653,7 @@ class AirshipGUI(QMainWindow):
         self.btn_import_files.clicked.connect(self._import_airfoil_files)
 
         self.btn_add_naca = QPushButton("+ Add NACA")
-        self.btn_add_naca.clicked.connect(self._add_naca_profile)
+        self.btn_add_naca.clicked.connect(self.add_naca_profile)
 
         btn_layout.addWidget(self.btn_import_files)
         btn_layout.addWidget(self.btn_add_naca)
@@ -676,38 +747,6 @@ class AirshipGUI(QMainWindow):
         self.airfoil_list.setCurrentRow(self.airfoil_list.count() - 1)
         self._sync_wing_dropdowns()
 
-    def _add_naca_profile(self):
-        text, ok = QInputDialog.getText(self, "Add NACA Airfoil", "Enter NACA 4-digit symmetric series (e.g., 0012, 0015, 0021):")
-
-        if ok and text.strip():
-            naca_str = text.strip()
-
-            if not naca_str.isdigit() or len(naca_str) < 2:
-                QMessageBox.warning(self, "Invalid Input", "Please enter a valid NACA number (e.g., 0012).")
-                return
-
-            thickness = float(naca_str[-2:])
-
-            if len(naca_str) == 4 and not naca_str.startswith("00"):
-                self.log.append(f"[WARNING] STRATOS native generator supports symmetric profiles. Defaulting to NACA 00{int(thickness):02d}.")
-                naca_str = f"00{int(thickness):02d}"
-
-            name = f"NACA_{naca_str}"
-            count = 1
-            base_name = name
-            while name in self.airfoil_library:
-                name = f"{base_name}_{count}"
-                count += 1
-
-            self.airfoil_library[name] = {
-                "type": "NACA", "thickness": thickness,
-                "res": 100, "scale": 1.0, "tx": 0.0, "ty": 0.0, "rot": 0.0
-            }
-
-            self.airfoil_list.addItem(name)
-            self.airfoil_list.setCurrentRow(self.airfoil_list.count() - 1)
-            self._sync_wing_dropdowns()
-
     def _remove_airfoil(self):
         item = self.airfoil_list.currentItem()
         if item and len(self.airfoil_library) > 1:
@@ -727,7 +766,7 @@ class AirshipGUI(QMainWindow):
         self._block_af_signals(True)
         if data["type"] == "FILE":
             self.inputs["AF_METHOD"].setCurrentText(data["method"])
-        else:
+        elif data["type"] == "NACA":
             self.inputs["AF_THICKNESS"].set_value(data["thickness"])
 
         self.inputs["AF_RES"].set_value(data["res"])
@@ -748,10 +787,13 @@ class AirshipGUI(QMainWindow):
             self.af_editor_group.setEnabled(False)
             return
         self.af_editor_group.setEnabled(True)
-        is_file = self.airfoil_library[item.text()]["type"] == "FILE"
+        data_type = self.airfoil_library[item.text()]["type"]
+        is_file = data_type == "FILE"
+        is_naca = data_type == "NACA"
+
         self.inputs["AF_METHOD"].setVisible(is_file)
         self.method_label.setVisible(is_file)
-        self.inputs["AF_THICKNESS"].setVisible(not is_file)
+        self.inputs["AF_THICKNESS"].setVisible(is_naca)
 
     def _sync_airfoil_props(self, *args):
         item = self.airfoil_list.currentItem()
@@ -783,8 +825,12 @@ class AirshipGUI(QMainWindow):
             if data["type"] == "FILE":
                 meth = None if "Auto" in data["method"] else data["method"]
                 x, y = get_airfoil_points(filename=data["path"], method=meth, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
-            else:
+            elif data["type"] == "NACA":
                 x, y = get_airfoil_points(thickness=data["thickness"], resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+            elif data["type"] == "MATH":
+                from geometry_handler import get_mathematical_naca
+                naca_code = item.text().upper().replace("NACA", "").replace("_", "").replace(" ", "").strip()
+                x, y = get_mathematical_naca(naca_code, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
 
             self.airfoil_fig.clear()
             ax = self.airfoil_fig.add_subplot(111)
@@ -819,12 +865,31 @@ class AirshipGUI(QMainWindow):
         if "l2d" in self.inputs:
             self.inputs["l2d"].setVisible(not is_dragon and not is_unified)
 
+        # Hide symmetric presets for non-standard shapes
         self.preset_combo.setVisible(not is_naca and not is_dragon and not is_unified)
         self.preset_label.setVisible(not is_naca and not is_dragon and not is_unified)
 
-        # Disable the 2D Petal Plot button for 3D asymmetric shapes
+        # Show Asymmetric Dropdown, Parameter Matrix, and Optimizer ONLY for UNIFIED_ASYMMETRIC
+        self.asymmetric_preset_combo.setVisible(is_unified)
+        self.asymmetric_preset_label.setVisible(is_unified)
+
+        if hasattr(self, 'asym_param_box'):
+            self.asym_param_box.setVisible(is_unified)
+
+        if hasattr(self, 'btn_inverse_opt'):
+            self.btn_inverse_opt.setVisible(is_unified)
+
+        # Context-aware plot button logic
         if hasattr(self, 'btn_plot'):
-            self.btn_plot.setEnabled(not is_dragon and not is_unified)
+            if is_unified:
+                self.btn_plot.setText("PLOT 2D PROFILES")
+                self.btn_plot.setEnabled(True)
+            elif is_dragon:
+                self.btn_plot.setText("PLOT 2D PETAL")
+                self.btn_plot.setEnabled(False)
+            else:
+                self.btn_plot.setText("PLOT 2D PETAL")
+                self.btn_plot.setEnabled(True)
 
     def setup_aerostat_tab(self):
         self.aerostat_tab = QWidget()
@@ -1116,6 +1181,16 @@ class AirshipGUI(QMainWindow):
         self.btn_csv.setStyleSheet("background-color: #555555; color: white;")
         self.btn_csv.clicked.connect(self.export_csv_data)
         self.btn_csv.hide()
+
+        self.btn_export_geom = QPushButton("EXPORT POINT CLOUD")
+        self.btn_export_geom.setMinimumHeight(35)
+        self.btn_export_geom.setStyleSheet("background-color: #2D2D2D; color: #00BFFF; font-weight: bold;")
+        self.btn_export_geom.clicked.connect(self.export_point_cloud)
+
+        btn_lay.addWidget(self.btn_run)
+        btn_lay.addWidget(self.btn_plot)
+        btn_lay.addWidget(self.btn_csv)
+        btn_lay.addWidget(self.btn_export_geom)
 
         btn_lay.addWidget(self.btn_run)
         btn_lay.addWidget(self.btn_plot)
@@ -1560,18 +1635,16 @@ class AirshipGUI(QMainWindow):
             "FATIGUE_FACTOR", "UV_DEGRADATION", "WING_SPAN", "WING_ROOT_CHORD", "WING_TIP_CHORD", "WING_SWEEP",
             "WING_DIHEDRAL", "WING_TWIST_ROOT", "WING_TWIST_TIP",
             "WING_THICKNESS", "WING_AXIAL_OFFSET", "HULL_WIDTH", "HULL_HEIGHT", "GAS_GAMMA", "EARTH_TEMP", "ALBEDO",
-            "CTE", "ELASTIC_MODULUS", "STRENGTH", "TEMP_DERATING" # Added the new direct inputs
+            "CTE", "ELASTIC_MODULUS", "STRENGTH", "TEMP_DERATING"
         ]
 
         for key in all_keys:
             if key in self.inputs:
                 p[key] = self.inputs[key].get_value()
 
-        # --- NEW DELTA_T OVERRIDE LOGIC ---
         if self.inputs.get("CALC_DELTA_T") and self.inputs["CALC_DELTA_T"].isChecked():
             p["DELTA_T"] = None
 
-        # Handle flatness percentage conversion safely
         if "BOTTOM_FLATNESS" in self.inputs:
             p["BOTTOM_FLATNESS"] = self.inputs["BOTTOM_FLATNESS"].get_value() / 100.0
         else:
@@ -1589,9 +1662,11 @@ class AirshipGUI(QMainWindow):
         p["INCLUDE_FINS"] = self.inputs["INCLUDE_FINS"].isChecked()
         p["ENVELOPE_PARAMS"] = (p.get("m1", 0), p.get("r0", 0), p.get("r1", 0), p.get("cp", 0), p.get("l2d", 0))
 
-        # --- CAPTURE WING TOGGLE & STATIONS ---
         p["INCLUDE_WINGS"] = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked()
 
+        # -------------------------------------------------------------------------
+        # WING STATION & AIRFOIL LOGIC
+        # -------------------------------------------------------------------------
         if p["INCLUDE_WINGS"] and hasattr(self, 'wing_table'):
             try:
                 stations = []
@@ -1617,6 +1692,7 @@ class AirshipGUI(QMainWindow):
 
                     stations.append({'y': y_val, 'chord': chord, 'twist': twist, 'x_off': x_off, 'z_off': z_off})
 
+                    # Route the geometry based on its designated type
                     if af_name and hasattr(self, 'airfoil_library') and af_name in self.airfoil_library:
                         af_data = self.airfoil_library[af_name]
                         res, scale = global_wing_res, af_data["scale"]
@@ -1625,8 +1701,12 @@ class AirshipGUI(QMainWindow):
                         if af_data["type"] == "FILE":
                             meth = None if "Auto" in af_data["method"] else af_data["method"]
                             x_pts, y_pts = get_airfoil_points(filename=af_data["path"], method=meth, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
-                        else:
+                        elif af_data["type"] == "NACA":
                             x_pts, y_pts = get_airfoil_points(thickness=af_data["thickness"], resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
+                        elif af_data["type"] == "MATH":
+                            from geometry_handler import get_mathematical_naca
+                            naca_code = af_name.upper().replace("NACA", "").replace("_", "").replace(" ", "").strip()
+                            x_pts, y_pts = get_mathematical_naca(naca_code, resolution=res, scale_factor=scale, translation=trans, rotation_angle=rot)
                     else:
                         x_pts, y_pts = get_airfoil_points(thickness=12.0, resolution=100, scale_factor=1.0)
 
@@ -1641,19 +1721,27 @@ class AirshipGUI(QMainWindow):
                 self.log.append(f"[ERROR] Failed to compile wing stations: {e}")
                 return None
 
-        # 1. OVERRIDE PARAMETERS REGARDLESS OF DIMENSIONING MODE
+        # -------------------------------------------------------------------------
+        # SERIES OVERRIDE AND VOLUMETRIC SCALING LOGIC
+        # -------------------------------------------------------------------------
         p["ENVELOPE_SERIES"] = self.inputs["ENVELOPE_SERIES"].currentText()
 
+        # Pre-load UNIFIED_ASYMMETRIC parameters directly from the 15 sliders
         if p["ENVELOPE_SERIES"] == "UNIFIED_ASYMMETRIC":
             p_matrix = [
-                [0.45, 0.60, 0.45, 0.68], # Lateral
-                [0.45, 0.55, 0.40, 0.62], # Dorsal (Upper)
-                [0.43, 0.60, 0.40, 0.66]  # Ventral (Lower)
+                [self.asym_inputs["lat_m"].get_value(), self.asym_inputs["lat_r0"].get_value(), self.asym_inputs["lat_r1"].get_value(), self.asym_inputs["lat_cp"].get_value()],
+                [self.asym_inputs["dor_m"].get_value(), self.asym_inputs["dor_r0"].get_value(), self.asym_inputs["dor_r1"].get_value(), self.asym_inputs["dor_cp"].get_value()],
+                [self.asym_inputs["ven_m"].get_value(), self.asym_inputs["ven_r0"].get_value(), self.asym_inputs["ven_r1"].get_value(), self.asym_inputs["ven_cp"].get_value()]
             ]
-            scales = [30.0, 14.0, 22.0]   # Alpha, Beta, Gamma
-            p["ENVELOPE_PARAMS"] = (p_matrix, scales)
+            actual_scales = [
+                self.asym_inputs["lat_scale"].get_value(),
+                self.asym_inputs["dor_scale"].get_value(),
+                self.asym_inputs["ven_scale"].get_value()
+            ]
 
-        # 2. VOLUMETRIC MODE SIZING LOGIC
+            p["ENVELOPE_PARAMS"] = (p_matrix, actual_scales)
+
+        # Volumetric Mode (Mode 2 is checkedId() == 2)
         if self.mode_button_group.checkedId() == 2:
             from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope, UnifiedAsymmetricEnvelope
 
@@ -1680,9 +1768,9 @@ class AirshipGUI(QMainWindow):
                 pass
 
             elif p["ENVELOPE_SERIES"] == "UNIFIED_ASYMMETRIC":
-                # Create a baseline reference hull at L=100m to evaluate the volume ratio
+                # Create a baseline reference hull at L=100m using the GUI slider scales
                 temp_env = UnifiedAsymmetricEnvelope.from_parameters(
-                    p["ENVELOPE_PARAMS"], 100.0, int(p["ENVELOPE_RESOLUTION"])
+                    (p_matrix, actual_scales), 100.0, int(p["ENVELOPE_RESOLUTION"])
                 )
 
                 # Scale length proportionally using V_new = s^3 * V_ref
@@ -1690,10 +1778,16 @@ class AirshipGUI(QMainWindow):
                 reference_volume = temp_env.volume()
                 scale_factor = (target_volume / reference_volume) ** (1/3)
 
+                # Update Length
                 new_length = 100.0 * scale_factor
                 p["ENVELOPE_LENGTH"] = new_length
                 self.inputs["ENVELOPE_LENGTH"].set_value(new_length)
 
+                # Update Scales array for the CAD engine
+                scaled_scales = [s * scale_factor for s in actual_scales]
+                p["ENVELOPE_PARAMS"] = (p_matrix, scaled_scales)
+
+        # Final constraints on Fin placement relative to the established hull length
         hull_len = p.get("ENVELOPE_LENGTH", 100)
         req_le = (p.get("FIN_AXIAL_OFFSET", 80) / 100.0) * hull_len
         max_le = hull_len - p.get("FIN_RC_LENGTH", 15) - 0.5
@@ -1830,20 +1924,62 @@ class AirshipGUI(QMainWindow):
         target_dir = self.current_session_folder
         p = self.get_parameters(target_dir)
         if p is None: return
+
         try:
-            dat_file = os.path.join(target_dir, f"{p['FINAL_OBJECT_NAME']}.dat")
-            msg = plot_and_save_profile(
-                p["ENVELOPE_PARAMS"],
-                p["ENVELOPE_LENGTH"],
-                int(p["ENVELOPE_RESOLUTION"]),
-                int(p["N_PETALS"]),
-                int(p["ENVELOPE_RESOLUTION"]),
-                dat_file,
-                p["FINAL_OBJECT_NAME"]
-            )
-            print(f"[GUI] Plotting results: {msg}")
+            if p.get("ENVELOPE_SERIES") == "UNIFIED_ASYMMETRIC":
+                from geometry_handler import UnifiedAsymmetricEnvelope
+                import matplotlib.pyplot as plt
+
+                env = UnifiedAsymmetricEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], int(p["ENVELOPE_RESOLUTION"]))
+                x = np.linspace(0, env.length, env.n)
+                r = env._get_radii(x)
+
+                plt.figure(figsize=(10, 8), facecolor='white')
+
+                # Planform (Top-down view of Lateral extents)
+                plt.subplot(2, 1, 1)
+                plt.plot(x, r[:, 0], 'b-', label='Starboard', linewidth=1.5)
+                plt.plot(x, -r[:, 0], 'b--', label='Port', linewidth=1.5)
+                plt.grid(True, linestyle=':', alpha=0.6)
+                plt.xlabel('x (m)')
+                plt.ylabel('y (m)')
+                plt.title(f"Planform - {self.asymmetric_preset_combo.currentText()}")
+                plt.legend(loc='best')
+                plt.axis('equal')
+
+                # Elevation (Side view of Dorsal/Ventral extents)
+                plt.subplot(2, 1, 2)
+                plt.plot(x, r[:, 1], 'r-', label='Crown (Dorsal)', linewidth=1.5)
+                plt.plot(x, -r[:, 2], 'k-', label='Keel (Ventral)', linewidth=1.5)
+                plt.grid(True, linestyle=':', alpha=0.6)
+                plt.xlabel('x (m)')
+                plt.ylabel('z (m)')
+                plt.title(f"Side Elevation - {self.asymmetric_preset_combo.currentText()}")
+                plt.legend(loc='best')
+                plt.axis('equal')
+
+                plt.tight_layout()
+
+                png_filename = os.path.join(target_dir, f"{p['FINAL_OBJECT_NAME']}_profiles.png")
+                plt.savefig(png_filename, dpi=300, bbox_inches='tight')
+                self.log.append(f"[SUCCESS] 2D Asymmetric Profiles plotted and saved to: {png_filename}")
+                plt.show()
+
+            else:
+                from geometry import plot_and_save_profile
+                dat_file = os.path.join(target_dir, f"{p['FINAL_OBJECT_NAME']}.dat")
+                msg = plot_and_save_profile(
+                    p["ENVELOPE_PARAMS"],
+                    p["ENVELOPE_LENGTH"],
+                    int(p["ENVELOPE_RESOLUTION"]),
+                    int(p["N_PETALS"]),
+                    int(p["ENVELOPE_RESOLUTION"]),
+                    dat_file,
+                    p["FINAL_OBJECT_NAME"]
+                )
+                self.log.append(f"[GUI] Plotting results: {msg}")
         except Exception as e:
-            print(f"Plot Error: {e}")
+            self.log.append(f"[ERROR] Plot Error: {e}")
 
     def load_defaults(self):
         self.load_preset(0)
@@ -2015,6 +2151,192 @@ class AirshipGUI(QMainWindow):
         lay.addWidget(self.btn_reset)
         lay.addWidget(self.btn_exit)
         return nav
+
+    def export_point_cloud(self):
+        """Exports the X, Y, Z surface mesh coordinates to a CSV file."""
+        target_dir = self.current_session_folder
+        p = self.get_parameters(target_dir)
+
+        if p is None: return
+
+        if p.get("ENVELOPE_SERIES") == "UNIFIED_ASYMMETRIC":
+            from geometry_handler import UnifiedAsymmetricEnvelope
+            import csv
+
+            path, _ = QFileDialog.getSaveFileName(self, "Export Hull Point Cloud", "", "CSV Files (*.csv)")
+            if not path: return
+
+            try:
+                env = UnifiedAsymmetricEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], int(p["ENVELOPE_RESOLUTION"]))
+                x = np.linspace(0, env.length, env.n)
+                theta = np.linspace(-np.pi, np.pi, 121)
+
+                r = env._get_radii(x)
+                TH, R_lat = np.meshgrid(theta, r[:, 0])
+                _, R_top = np.meshgrid(theta, r[:, 1])
+                _, R_bot = np.meshgrid(theta, r[:, 2])
+                XX, _ = np.meshgrid(theta, x)
+
+                Y = R_lat * np.cos(TH)
+                Z = (R_top * (np.sin(TH) >= 0) + R_bot * (np.sin(TH) < 0)) * np.sin(TH)
+
+                # 1. Export 3D Point Cloud
+                with open(path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["X (m)", "Y (m)", "Z (m)"])
+                    for i in range(XX.shape[0]):
+                        for j in range(XX.shape[1]):
+                            writer.writerow([XX[i, j], Y[i, j], Z[i, j]])
+                self.log.append(f"[SUCCESS] Point cloud exported to: {path}")
+
+                # 2. Export 2D Profile Curves
+                profile_path = path.replace(".csv", "_profiles.csv")
+                with open(profile_path, 'w', newline='') as f2:
+                    writer2 = csv.writer(f2)
+                    writer2.writerow(["X (m)", "Lateral_Y (m)", "Dorsal_Z (m)", "Ventral_Z (m)"])
+                    for i in range(len(x)):
+                        writer2.writerow([x[i], r[i, 0], r[i, 1], r[i, 2]])
+                self.log.append(f"[SUCCESS] 2D Profiles exported to: {profile_path}")
+
+            except Exception as e:
+                self.log.append(f"[ERROR] Point cloud export failed: {e}")
+        else:
+            QMessageBox.warning(self, "Unsupported Format", "Point cloud export is currently only supported for the UNIFIED_ASYMMETRIC profile series.")
+
+    def run_inverse_optimization(self):
+        dialog = OptimizerDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            try:
+                L, W, H_up, H_low = dialog.get_values()
+
+                self.log.append(f"\n[OPTIMIZER] Running SLSQP for Target: L={L}, W={W}, H+={H_up}, H-={H_low}...")
+                self.btn_inverse_opt.setText("OPTIMIZING (Please Wait)...")
+                self.btn_inverse_opt.setEnabled(False)
+                QApplication.processEvents() # Force UI refresh
+
+                # Run the math solver
+                from geometry_handler import fit_to_target_ellipsoid, ASYMMETRIC_PRESETS
+                p_matrix, scales, sse = fit_to_target_ellipsoid(L, W, H_up, H_low)
+
+                # Create a dynamic preset name
+                preset_name = f"Optimized (W={W}, Z+={H_up}, Z-={H_low})"
+
+                # Save into the preset dictionary
+                ASYMMETRIC_PRESETS[preset_name] = {
+                    "params": p_matrix,
+                    "scales": scales
+                }
+
+                # Add to the UI Dropdown and select it
+                self.asymmetric_preset_combo.blockSignals(True)
+                if self.asymmetric_preset_combo.findText(preset_name) == -1:
+                    self.asymmetric_preset_combo.addItem(preset_name)
+                self.asymmetric_preset_combo.setCurrentText(preset_name)
+                self.asymmetric_preset_combo.blockSignals(False)
+
+                # Force Length slider to match the optimization target
+                self.inputs["ENVELOPE_LENGTH"].set_value(L)
+                self._auto_update_props()
+
+                self.log.append(f"[SUCCESS] Optimizer converged (SSE: {sse:.3e}). Shape saved as '{preset_name}'.")
+
+            except Exception as e:
+                self.log.append(f"[ERROR] Optimization failed: {e}")
+            finally:
+                self.btn_inverse_opt.setText("Run Inverse Shape Fitting...")
+                self.btn_inverse_opt.setEnabled(True)
+
+    def load_asymmetric_preset(self, *args):
+        preset_name = self.asymmetric_preset_combo.currentText()
+        from geometry_handler import ASYMMETRIC_PRESETS
+
+        if preset_name in ASYMMETRIC_PRESETS:
+            data = ASYMMETRIC_PRESETS[preset_name]
+            p_mat = data["params"]
+            scales = data["scales"]
+
+            # Block signals to prevent 15 consecutive auto-update triggers
+            for k in self.asym_inputs.values():
+                k.blockSignals(True)
+
+            keys = ["m", "r0", "r1", "cp"]
+            for i, prefix in enumerate(["lat", "dor", "ven"]):
+                for j, key in enumerate(keys):
+                    self.asym_inputs[f"{prefix}_{key}"].set_value(p_mat[i][j])
+                self.asym_inputs[f"{prefix}_scale"].set_value(scales[i])
+
+            for k in self.asym_inputs.values():
+                k.blockSignals(False)
+
+            self._auto_update_props()
+
+    def add_naca_profile(self):
+        """Native mathematical generator for NACA profiles."""
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+        text, ok = QInputDialog.getText(self, "Add NACA Airfoil", "Enter NACA 4 or 5 digit code (e.g., 4412, 23015):")
+
+        if ok and text:
+            naca_clean = text.upper().replace("NACA", "").replace(" ", "").strip()
+
+            if naca_clean.isdigit() and len(naca_clean) in [4, 5]:
+                name = f"NACA {naca_clean}"
+
+                if not hasattr(self, 'airfoil_library'):
+                    self.airfoil_library = {}
+
+                if name not in self.airfoil_library:
+                    # Register purely as a MATH type
+                    self.airfoil_library[name] = {
+                        "type": "MATH",
+                        "res": 150,
+                        "scale": 1.0,
+                        "tx": 0.0,
+                        "ty": 0.0,
+                        "rot": 0.0
+                    }
+
+                    self.airfoil_list.addItem(name)
+                    self.airfoil_list.setCurrentRow(self.airfoil_list.count() - 1)
+
+                    if hasattr(self, 'wing_table'):
+                        for row in range(self.wing_table.rowCount()):
+                            combo = self.wing_table.cellWidget(row, 5)
+                            if combo:
+                                combo.addItem(name)
+                                if row == 0 and combo.count() == 1:
+                                    combo.setCurrentText(name)
+
+                    self.log.append(f"[SUCCESS] {name} mathematical profile added to library.")
+                else:
+                    self.log.append(f"[INFO] {name} is already in the library.")
+            else:
+                QMessageBox.warning(self, "Invalid Input", "Please enter a valid numerical NACA code.")
+
+class OptimizerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Inverse Shape Fitting (SLSQP)")
+        self.setMinimumWidth(300)
+
+        layout = QFormLayout(self)
+        self.len_input = QLineEdit("100.0")
+        self.width_input = QLineEdit("70.0")
+        self.h_up_input = QLineEdit("15.0")
+        self.h_low_input = QLineEdit("30.0")
+
+        layout.addRow("Target Length (m):", self.len_input)
+        layout.addRow("Target Full Width (m):", self.width_input)
+        layout.addRow("Target Upper Half-Height (m):", self.h_up_input)
+        layout.addRow("Target Lower Half-Height (m):", self.h_low_input)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addRow(self.buttons)
+
+    def get_values(self):
+        return float(self.len_input.text()), float(self.width_input.text()), float(self.h_up_input.text()), float(self.h_low_input.text())
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
