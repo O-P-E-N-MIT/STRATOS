@@ -162,22 +162,24 @@ try:
             for x in x_vals:
                 radii = envelope_geom._get_radii(x)
 
-                # If radius is effectively zero (nose/tail), collapse to a vertex
-                if max(radii) < 1e-6:
-                    wires.append(geompy.MakeVertex(x, 0, 0))
-                else:
-                    r_lat, r_top, r_bot = radii[0], radii[1], radii[2]
-                    pts = []
-                    for th in theta_vals:
-                        y = r_lat * math.cos(th)
-                        z = r_top * math.sin(th) if math.sin(th) >= 0 else r_bot * math.sin(th)
-                        pts.append(geompy.MakeVertex(x, y, z))
+                # FIX 1: Prevent 0-radius singularity at the nose and tail
+                # Clamps to 10 microns so Salome always lofts between valid Wires, not Vertices
+                r_lat = max(radii[0], 1e-5)
+                r_top = max(radii[1], 1e-5)
+                r_bot = max(radii[2], 1e-5)
 
-                    pts.append(pts[0]) # Close the loop
-                    wires.append(safe_polyline(pts, True))
+                pts = []
+                for th in theta_vals:
+                    y = r_lat * math.cos(th)
+                    z = r_top * math.sin(th) if math.sin(th) >= 0 else r_bot * math.sin(th)
+                    pts.append(geompy.MakeVertex(x, y, z))
 
-            # Loft the discrete wire cross-sections into a solid hull
-            envelope = geompy.MakeThruSections(wires, True, 0.0001, False)
+                # FIX 2: Use MakeInterpol for smooth BSpline cross-sections instead of jagged Polylines
+                wires.append(geompy.MakeInterpol(pts, True, False))
+
+            # FIX 3: Set isRuled=True (4th argument) to prevent self-intersection between dense slices.
+            # Salome will automatically cap the microscopic 1e-5 holes at the ends because MakeSolid=True.
+            envelope = geompy.MakeThruSections(wires, True, 0.0001, True)
             return envelope_geom, envelope
 
         # --- Axisymmetric Revolved Profiles ---
