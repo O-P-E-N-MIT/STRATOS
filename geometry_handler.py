@@ -11,8 +11,9 @@
 # t = Maximum thickness as percentage of chord
 
 import numpy as np
-
 from scipy.integrate import dblquad, simpson, quad
+from scipy.optimize import minimize
+
 
 try:
     from shapely.geometry import Point, box
@@ -38,6 +39,33 @@ STANDARD_ENVELOPES = {
     "Ellipsoid":    (0.5000, 0.5000, 0.5001, 0.6667, 4.9999),
     "SkyShip":      (0.4093, 0.6522, 0.1000, 0.6131, 3.8692),
     "Custom":       (0.4150, 0.6000, 0.1800, 0.6150, 3.0440),
+}
+
+ASYMMETRIC_PRESETS = {
+    "Conventional Airship": {
+        "params": [[0.42, 0.50, 0.40, 0.62], [0.42, 0.50, 0.40, 0.62], [0.42, 0.50, 0.40, 0.62]],
+        "scales": [20.0, 20.0, 20.0]
+    },
+    "HALE": {
+        "params": [[0.43, 0.30, 0.25, 0.58], [0.43, 0.30, 0.25, 0.58], [0.43, 0.30, 0.25, 0.58]],
+        "scales": [14.0, 14.0, 14.0]
+    },
+    "Solar Airship": {
+        "params": [[0.44, 0.55, 0.40, 0.65], [0.44, 0.50, 0.35, 0.60], [0.42, 0.55, 0.35, 0.68]],
+        "scales": [22.0, 12.0, 22.0]
+    },
+    "Hybrid Lifting Body": {
+        "params": [[0.45, 0.60, 0.45, 0.68], [0.45, 0.55, 0.40, 0.62], [0.43, 0.60, 0.40, 0.66]],
+        "scales": [30.0, 14.0, 22.0]
+    },
+    "Heavy-Lift Cargo": {
+        "params": [[0.48, 0.65, 0.60, 0.74], [0.48, 0.65, 0.60, 0.74], [0.46, 0.65, 0.55, 0.72]],
+        "scales": [24.0, 22.0, 26.0]
+    },
+    "Streamlined Teardrop": {
+        "params": [[0.36, 0.70, 0.20, 0.56], [0.36, 0.70, 0.20, 0.56], [0.36, 0.70, 0.20, 0.56]],
+        "scales": [18.0, 18.0, 18.0]
+    }
 }
 
 # A way to store the coefficients in the memory instead of computing it for the same parameters every time.
@@ -911,3 +939,122 @@ class UnifiedAsymmetricEnvelope(Envelope):
         self.scales = self.scales * scale_factor
         self.diameter = self.scales[1]
         self.length = l
+
+def fit_to_target_ellipsoid(L, W, H_upper, H_lower, nx=40, nt=80):
+    """
+    Inverse optimization to find the 3x4 Gertler parameter matrix and scaling factors
+    that best match a target asymmetric ellipsoid, minimizing the Sum of Squared Errors (SSE).
+    """
+    # 1. Generate the target asymmetric ellipsoid mesh
+    u = np.linspace(0, 1, nx)
+    theta = np.linspace(-np.pi, np.pi, nt, endpoint=False)
+
+    TH, U = np.meshgrid(theta, u)
+    RHO = np.sqrt(np.maximum(0, 1 - (2*U - 1)**2))
+
+    Y_target = (W / 2) * RHO * np.cos(TH)
+    Z_target = RHO * ((H_upper * (np.sin(TH) >= 0) + H_lower * (np.sin(TH) < 0)) * np.sin(TH))
+
+    # 2. Define the cost function (SSE)
+    def cost_function(d):
+        p_matrix = d[:12].reshape((3, 4))
+        scales = d[12:15]
+        env = UnifiedAsymmetricEnvelope(p_matrix, scales, L, nx)
+
+        r = env._get_radii(L * u)
+        Y_env = r[:, 0:1] * np.cos(theta)
+        Z_env = (r[:, 1:2] * (np.sin(theta) >= 0) + r[:, 2:3] * (np.sin(theta) < 0)) * np.sin(theta)
+
+        # Scale SSE by 1e-4 for better numerical conditioning
+        return 1e-4 * np.sum((Y_env - Y_target)**2 + (Z_env - Z_target)**2)
+
+    # 3. Initial Guess (d0) and Bounds (lb, ub)
+    d0 = np.array([0.5, 0.5, 0.5, 0.6] * 3 + [W, 2*H_upper, 2*H_lower])
+    bounds = [(0.3, 0.7), (0.1, 0.9), (0.1, 0.9), (0.4, 0.8)] * 3 + [(1, W), (1, 3.5*H_upper), (1, 3.5*H_lower)]
+
+    # 4. Run SLSQP Optimizer
+    res = minimize(cost_function, d0, bounds=bounds, method='SLSQP', options={'ftol': 1e-9, 'maxiter': 3000})
+
+    p_matrix_opt = res.x[:12].reshape((3, 4)).tolist()
+    scales_opt = res.x[12:15].tolist()
+
+    return p_matrix_opt, scales_opt, res.fun
+
+def get_mathematical_naca(naca_code, resolution=100, scale_factor=1.0, translation=(0.0, 0.0), rotation_angle=0.0):
+    """Generates precise 2D coordinates for NACA 4-digit and 5-digit airfoils."""
+    naca = str(naca_code).upper().replace("NACA", "").replace(" ", "").strip()
+
+    # Cosine spacing clusters points at LE and TE to prevent CAD lofting errors
+    beta = np.linspace(0, np.pi, resolution)
+    x = 0.5 * (1 - np.cos(beta))
+
+    if len(naca) == 4:
+        m = int(naca[0]) / 100.0
+        p = int(naca[1]) / 10.0
+        t = int(naca[2:4]) / 100.0
+
+        yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1015 * x**4)
+
+        yc = np.zeros_like(x)
+        dyc = np.zeros_like(x)
+
+        if p > 0:
+            mask1 = x <= p
+            mask2 = x > p
+            yc[mask1] = (m / p**2) * (2 * p * x[mask1] - x[mask1]**2)
+            dyc[mask1] = (2 * m / p**2) * (p - x[mask1])
+            yc[mask2] = (m / (1 - p)**2) * ((1 - 2 * p) + 2 * p * x[mask2] - x[mask2]**2)
+            dyc[mask2] = (2 * m / (1 - p)**2) * (p - x[mask2])
+
+    elif len(naca) == 5:
+        cl_design = int(naca[0]) * 0.15
+        camber_scale = cl_design / 0.3  # Scale relative to baseline k1 tables
+        p_val = int(naca[1:3]) / 200.0
+        t = int(naca[3:5]) / 100.0
+
+        naca5_params = {
+            0.05: (0.0580, 361.4), 0.10: (0.1260, 51.64), 0.15: (0.2025, 15.957),
+            0.20: (0.2900, 6.643), 0.25: (0.3910, 3.230)
+        }
+        key = min(naca5_params.keys(), key=lambda k: abs(k - p_val))
+        m_val, k1 = naca5_params[key]
+
+        yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x**2 + 0.2843 * x**3 - 0.1015 * x**4)
+        yc = np.zeros_like(x)
+        dyc = np.zeros_like(x)
+
+        mask1 = x <= m_val
+        mask2 = x > m_val
+
+        yc[mask1] = camber_scale * (k1 / 6.0) * (x[mask1]**3 - 3 * m_val * x[mask1]**2 + m_val**2 * (3 - m_val) * x[mask1])
+        dyc[mask1] = camber_scale * (k1 / 6.0) * (3 * x[mask1]**2 - 6 * m_val * x[mask1] + m_val**2 * (3 - m_val))
+
+        yc[mask2] = camber_scale * (k1 * m_val**3 / 6.0) * (1 - x[mask2])
+        dyc[mask2] = camber_scale * (-k1 * m_val**3 / 6.0)
+
+    else:
+        raise ValueError(f"Invalid NACA code: {naca}")
+
+    theta = np.arctan(dyc)
+
+    xu = x - yt * np.sin(theta)
+    yu = yc + yt * np.cos(theta)
+    xl = x + yt * np.sin(theta)
+    yl = yc - yt * np.cos(theta)
+
+    # Trace closed Selig format loop: Trailing Edge -> Upper -> Leading Edge -> Lower -> Trailing Edge
+    x_out = np.concatenate([xu[::-1], xl[1:]])
+    y_out = np.concatenate([yu[::-1], yl[1:]])
+
+    x_out, y_out = x_out * scale_factor, y_out * scale_factor
+
+    if rotation_angle != 0.0:
+        rad = np.radians(rotation_angle)
+        x_rot = x_out * np.cos(rad) - y_out * np.sin(rad)
+        y_rot = x_out * np.sin(rad) + y_out * np.cos(rad)
+        x_out, y_out = x_rot, y_rot
+
+    x_out += translation[0]
+    y_out += translation[1]
+
+    return x_out, y_out
