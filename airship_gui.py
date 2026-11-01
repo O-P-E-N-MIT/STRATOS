@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
 from balloon import create_balloon_geometry
 from geometry import AirshipGeometry, plot_and_save_profile
 from geometry_handler import STANDARD_ENVELOPES
+from geometry_handler import GertlerEnvelope, NACAEnvelope, DragonDreamEnvelope, UnifiedAsymmetricEnvelope
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -1335,10 +1336,16 @@ class AirshipGUI(QMainWindow):
             from geometry_handler import GertlerEnvelope, NACAEnvelope
 
             series = p.get("ENVELOPE_SERIES", "GERTLER")
+            env_res = int(p.get("ENVELOPE_RESOLUTION", 150))
+
             if series == "NACA":
-                resolved_env = NACAEnvelope.from_parameters((p["l2d"],), p["ENVELOPE_LENGTH"])
+                resolved_env = NACAEnvelope.from_parameters((p["l2d"],), p["ENVELOPE_LENGTH"], env_res)
+            elif series == "DRAGON_DREAM":
+                resolved_env = DragonDreamEnvelope(p["ENVELOPE_LENGTH"], p["HULL_WIDTH"], p["HULL_HEIGHT"], p["BOTTOM_FLATNESS"], env_res)
+            elif series == "UNIFIED_ASYMMETRIC":
+                resolved_env = UnifiedAsymmetricEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], env_res)
             else:
-                resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"])
+                resolved_env = GertlerEnvelope.from_parameters(p["ENVELOPE_PARAMS"], p["ENVELOPE_LENGTH"], env_res)
 
             ahull = AerostatHull(
                 envelope=resolved_env,
