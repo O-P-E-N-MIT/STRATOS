@@ -548,10 +548,8 @@ class AirshipGUI(QMainWindow):
         self.appendages_box = QGroupBox("Hull Appendages")
         al = QVBoxLayout(self.appendages_box)
 
-        self.inputs["INCLUDE_WINGS"] = QCheckBox("GENERATE WING WITH HULL")
-        self.inputs["INCLUDE_WINGS"].setChecked(False)
-        self.inputs["INCLUDE_WINGS"].setFont(QFont("Arial", 10, QFont.Bold))
-        self.inputs["INCLUDE_WINGS"].setStyleSheet("color: #00BFFF;")
+        # Uses the unified custom theme generator applied to the other tabs
+        self.inputs["INCLUDE_WINGS"] = self._create_checkbox("GENERATE WING WITH HULL", checked=False, bold=True)
 
         self.inputs["INCLUDE_WINGS"].toggled.connect(self.refresh_tabs)
         self.inputs["INCLUDE_WINGS"].toggled.connect(self._auto_update_props)
@@ -1024,6 +1022,29 @@ class AirshipGUI(QMainWindow):
 
         is_winged = self.inputs.get("INCLUDE_WINGS") and self.inputs["INCLUDE_WINGS"].isChecked() and not is_balloon
 
+        # --- NEW: Hide unsupported shapes for BILOBE and TRILOBE ---
+        combo = self.inputs["ENVELOPE_SERIES"]
+        is_multi_lobe = self.lobe_button_group.checkedId() > 1
+
+        current_selection = combo.currentText()
+
+        # Revert to GERTLER automatically if switching to multi-lobe from an unsupported shape
+        if is_multi_lobe and current_selection in ["DRAGON_DREAM", "UNIFIED_ASYMMETRIC"]:
+            current_selection = "GERTLER"
+
+        # Dynamically rebuild the dropdown list based on the lobe configuration
+        combo.blockSignals(True)
+        combo.clear()
+        if is_multi_lobe:
+            combo.addItems(["GERTLER", "NACA"])
+        else:
+            combo.addItems(["GERTLER", "NACA", "DRAGON_DREAM", "UNIFIED_ASYMMETRIC"])
+        combo.blockSignals(False)
+
+        combo.setCurrentText(current_selection)
+        self._update_series_visibility()
+        # --------------------------------------------------------------
+
         self.hull_shape_box.setHidden(is_balloon)
         self.balloon_params_box.setHidden(not is_balloon)
         self.hull_config_group.setHidden(is_balloon)
@@ -1052,7 +1073,6 @@ class AirshipGUI(QMainWindow):
             self.tab_widget.addTab(self.wing_tab, "Wing Design")
         if not is_balloon:
             self.tab_widget.addTab(self.fin_tab, "Fin Design")
-
 
         self.tab_widget.addTab(self.output_tab, "Output")
         self.tab_widget.setCurrentIndex(min(curr, self.tab_widget.count()-1))
