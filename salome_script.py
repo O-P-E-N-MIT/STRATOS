@@ -163,10 +163,10 @@ try:
                 radii = envelope_geom._get_radii(x)
 
                 # FIX 1: Prevent 0-radius singularity at the nose and tail
-                # Clamps to 10 microns so Salome always lofts between valid Wires, not Vertices
-                r_lat = max(radii[0], 1e-5)
-                r_top = max(radii[1], 1e-5)
-                r_bot = max(radii[2], 1e-5)
+                # Clamps to 1mm (1e-3) to satisfy CATIA V5's strict topological tolerance
+                r_lat = max(radii[0], 1e-3)
+                r_top = max(radii[1], 1e-3)
+                r_bot = max(radii[2], 1e-3)
 
                 pts = []
                 for th in theta_vals:
